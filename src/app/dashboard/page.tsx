@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
+import { redirect } from "next/navigation";
 
 export default function DashboardPage() {
-  return <main className="shell"><h1>Dashboard</h1><p>Protected account workspace.</p></main>;
+  redirect("/groups");
 }
