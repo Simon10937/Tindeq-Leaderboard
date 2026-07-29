@@ -17,7 +17,7 @@ export async function signUp(form: FormData) {
     password,
     options: {
       data: { display_name: displayName },
-      emailRedirectTo: `${getServerEnv().NEXT_PUBLIC_APP_URL}/api/auth/confirm?next=${field(form, "next") === "/invite" ? "/invite" : "/groups"}`,
+      emailRedirectTo: `${getServerEnv().NEXT_PUBLIC_APP_URL}/api/auth/confirm?next=${field(form, "next") === "/invite" ? "/invite" : "/dashboard"}`,
     },
   });
   if (error) authMessage("Unable to create the account. Check the details and try again.");
@@ -37,7 +37,7 @@ export async function signIn(form: FormData) {
     await supabase.auth.signOut();
     authMessage("This account is not available.");
   }
-  redirect(field(form, "next") === "/invite" ? "/invite" : "/groups");
+  redirect(field(form, "next") === "/invite" ? "/invite" : "/dashboard");
 }
 
 export async function signOut() {
@@ -60,5 +60,5 @@ export async function updatePassword(form: FormData) {
   const supabase = await createClient();
   const { error } = await supabase.auth.updateUser({ password });
   if (error) redirect("/reset-password?message=The reset link is invalid or expired.");
-  redirect("/groups?message=Password updated.");
+  redirect("/dashboard");
 }

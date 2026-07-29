@@ -51,7 +51,7 @@ describe("signIn", () => {
     form.set("email", "simon@example.com");
     form.set("password", "correct horse battery staple");
 
-    await expect(signIn(form)).rejects.toThrow("NEXT_REDIRECT:/groups");
+    await expect(signIn(form)).rejects.toThrow("NEXT_REDIRECT:/dashboard");
 
     expect(mocks.from).toHaveBeenCalledWith("profiles");
     expect(mocks.eq).toHaveBeenCalledWith("id", "signed-in-user");

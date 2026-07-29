@@ -73,13 +73,11 @@ export function parseLeaderboardFilters(search: Record<string, string | string[]
 async function listEntries(query: LeaderboardQuery): Promise<LeaderboardEntry[]> {
   const supabase = await createClient();
   let request = supabase
-    .from("leaderboard_entries")
-    .select(
-      "session_id,group_id,owner_id,display_name,protocol_version_id,protocol_name,assessment_type,hand,attempt_id,metric_run_id,absolute_score,relative_score,authoritative_captured_at,trust_status,published_at",
-    )
-    .eq("group_id", query.groupId)
-    .eq("protocol_version_id", query.protocolVersionId)
-    .eq("hand", query.filters.hand ?? "right");
+    .rpc("list_leaderboard_entries", {
+      target_group: query.groupId,
+      target_protocol_version: query.protocolVersionId,
+      target_hand: query.filters.hand ?? "right",
+    });
 
   if (query.filters.trust && query.filters.trust !== "all") {
     request = request.eq("trust_status", query.filters.trust);

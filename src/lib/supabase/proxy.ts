@@ -16,6 +16,11 @@ export async function updateSession(request: NextRequest) {
     },
   });
   const { data } = await supabase.auth.getClaims();
+  if (request.nextUrl.pathname === "/" && data?.claims) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/dashboard";
+    return NextResponse.redirect(url);
+  }
   const isProtected = request.nextUrl.pathname.startsWith("/dashboard");
   if (isProtected && !data?.claims) {
     const url = request.nextUrl.clone();

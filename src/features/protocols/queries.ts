@@ -2,6 +2,36 @@ import "server-only";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
+type PrimaryLeaderboardVersion = { id: string; group_id: string };
+
+export async function getPrimaryLeaderboardVersion(groupIds: string[]): Promise<PrimaryLeaderboardVersion | null> {
+  if (groupIds.length === 0) return null;
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("protocol_versions")
+    .select("id,group_id")
+    .in("group_id", groupIds)
+    .in("state", ["published", "locked"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error("Unable to find the primary leaderboard");
+  return data;
+}
+
+export async function getProtocolVersionName(groupId: string, protocolVersionId: string): Promise<string> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("protocol_versions")
+    .select("protocol_families(name)")
+    .eq("id", protocolVersionId)
+    .eq("group_id", groupId)
+    .maybeSingle();
+  if (error) throw new Error("Unable to load protocol details");
+  const family = Array.isArray(data?.protocol_families) ? data.protocol_families[0] : data?.protocol_families;
+  return family?.name ?? "Protocol leaderboard";
+}
+
 export async function listProtocols(groupId: string) {
   const supabase = await createClient();
   const { data: membership } = await supabase.from("group_memberships").select("role").eq("group_id", groupId).eq("status", "active").maybeSingle();
