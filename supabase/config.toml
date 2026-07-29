@@ -17,15 +17,25 @@ port = 54323
 
 [auth]
 enabled = true
-site_url = "http://127.0.0.1:3000"
-additional_redirect_urls = ["http://localhost:3000/api/auth/confirm"]
+site_url = "https://tindeq-leaderboard.vercel.app"
+additional_redirect_urls = [
+  "https://tindeq-leaderboard.vercel.app/api/auth/confirm",
+  "http://localhost:3000/api/auth/confirm",
+  "http://127.0.0.1:3000/api/auth/confirm"
+]
 enable_signup = true
 
 [auth.email]
 enable_signup = true
 double_confirm_changes = true
 enable_confirmations = true
+max_frequency = "1m0s"
+otp_length = 8
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
 
 [storage]
 enabled = true
-file_size_limit = "5MiB"
+file_size_limit = "50MiB"

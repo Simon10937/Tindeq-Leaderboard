@@ -11,3 +11,7 @@ test-results/
 .codex-temp/
 *.log
 *.tsbuildinfo
+
+.vercel
+.env*
+supabase/.temp/
