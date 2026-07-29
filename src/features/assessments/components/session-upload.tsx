@@ -36,7 +36,12 @@ export function SessionUpload({ groupId, protocolVersionId }: { groupId: string;
         if (result.status !== "ready") throw new Error(`Attempt ${index + 1} could not be parsed: ${result.reason}`);
       }
       const publication = await publishAssessmentSession(prepared.sessionId);
-      setMessage(publication.published ? "Session published to the group leaderboard." : "Attempts stored privately. Ranking remains disabled until the independent RFD oracle is approved.");
+      const failureMessage = publication.reason === "oracle_not_approved"
+        ? "Attempts stored privately. Ranking remains disabled until the independent RFD oracle is approved."
+        : publication.reason === "session_unresolved"
+          ? "Some attempts still need processing or exclusion before this session can be published."
+          : "Attempts were stored, but publication failed. Please retry.";
+      setMessage(publication.published ? "Session published to the group leaderboard." : failureMessage);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Upload failed. Retry the affected files.");
     } finally {

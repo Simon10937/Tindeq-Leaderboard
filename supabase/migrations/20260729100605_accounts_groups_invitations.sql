@@ -92,6 +92,7 @@ create table public.audit_events (
   )),
   target_type text not null check (target_type in ('group', 'membership', 'invitation', 'account')),
   target_id uuid,
+  target_tombstone uuid,
   created_at timestamptz not null default now()
 );
 
@@ -108,7 +109,7 @@ $$;
 create or replace function private.has_group_role(target_group uuid, allowed public.group_role[])
 returns boolean language sql stable security definer set search_path = '' as $$
   select private.current_account_active() and exists (
-    select 1 from public.group_memberships m
+    select 1 from public.group_memberships m join public.groups g on g.id = m.group_id and g.deleted_at is null
     where m.group_id = target_group and m.user_id = auth.uid()
       and m.status = 'active' and m.role = any(allowed)
   );
@@ -154,6 +155,10 @@ declare normalized_email text := lower(btrim(invite_email));
 begin
   if not private.has_group_role(target_group, array['owner','admin']::public.group_role[]) then raise exception 'forbidden'; end if;
   if invite_token_hash !~ '^[a-f0-9]{64}$' then raise exception 'invalid_token_hash'; end if;
+  if exists (
+    select 1 from auth.users u join public.group_memberships m on m.user_id = u.id
+    where lower(u.email) = normalized_email and m.group_id = target_group and m.status = 'active'
+  ) then raise exception 'already_member'; end if;
   update public.group_invitations set status = 'revoked', updated_at = now()
     where group_id = target_group and email_normalized = normalized_email and status = 'pending';
   return query
@@ -179,11 +184,10 @@ begin
     where token_hash = encode(extensions.digest(convert_to(raw_token, 'UTF8'), 'sha256'), 'hex')
     for update;
   if invitation.id is null or invitation.status <> 'pending' then raise exception 'invitation_unavailable'; end if;
-  if invitation.expires_at <= now() then
-    update public.group_invitations set status = 'expired', updated_at = now() where id = invitation.id;
-    raise exception 'invitation_expired';
-  end if;
+  if invitation.expires_at <= now() then raise exception 'invitation_expired'; end if;
   if current_email is distinct from invitation.email_normalized then raise exception 'invitation_email_mismatch'; end if;
+  if exists (select 1 from public.group_memberships where group_id = invitation.group_id and user_id = auth.uid() and status = 'active')
+    then raise exception 'already_member'; end if;
   insert into public.group_memberships (group_id, user_id, role, status, ended_at)
     values (invitation.group_id, auth.uid(), 'member', 'active', null)
     on conflict (group_id, user_id) do update set role = 'member', status = 'active', ended_at = null, joined_at = now();
@@ -218,6 +222,20 @@ begin
     where group_id = target_group and user_id = auth.uid() and status = 'active';
   insert into public.audit_events (group_id, actor_id, event_type, target_type, target_id)
     values (target_group, auth.uid(), 'membership.left', 'membership', auth.uid());
+end;
+$$;
+
+create or replace function public.delete_group(target_group uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  if not private.has_group_role(target_group, array['owner']::public.group_role[]) then raise exception 'forbidden'; end if;
+  insert into public.audit_events (group_id, actor_id, event_type, target_type, target_id)
+    values (target_group, auth.uid(), 'group.deleted', 'group', target_group);
+  update public.groups set deleted_at = now() where id = target_group and deleted_at is null;
+  update public.group_memberships set status = 'removed', ended_at = now()
+    where group_id = target_group and status = 'active';
+  update public.group_invitations set status = 'revoked', updated_at = now()
+    where group_id = target_group and status = 'pending';
 end;
 $$;
 
@@ -285,12 +303,13 @@ revoke all on function public.create_group_invitation(uuid, text, text) from pub
 revoke all on function public.redeem_group_invitation(text) from public, anon;
 revoke all on function public.record_invitation_delivery(uuid, public.delivery_status, text) from public, anon;
 revoke all on function public.leave_group(uuid) from public, anon;
+revoke all on function public.delete_group(uuid) from public, anon;
 revoke all on function public.remove_group_member(uuid, uuid) from public, anon;
 revoke all on function public.change_group_member_role(uuid, uuid, public.group_role) from public, anon;
 revoke all on function public.transfer_group_ownership(uuid, uuid) from public, anon;
 revoke all on function public.request_account_deletion() from public, anon;
 grant execute on function public.create_group(text), public.create_group_invitation(uuid, text, text),
-  public.redeem_group_invitation(text), public.leave_group(uuid),
+  public.redeem_group_invitation(text), public.leave_group(uuid), public.delete_group(uuid),
   public.record_invitation_delivery(uuid, public.delivery_status, text),
   public.remove_group_member(uuid, uuid), public.change_group_member_role(uuid, uuid, public.group_role),
   public.transfer_group_ownership(uuid, uuid), public.request_account_deletion() to authenticated;
@@ -324,4 +343,3 @@ revoke all on table public.profiles, public.groups, public.group_memberships, pu
   public.account_deletion_jobs, public.audit_events from anon, authenticated;
 grant select on public.profiles, public.groups, public.group_memberships to authenticated;
 grant update (display_name) on public.profiles to authenticated;
-grant select on public.audit_events to authenticated;

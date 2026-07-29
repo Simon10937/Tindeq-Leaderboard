@@ -2,7 +2,7 @@
 
 Cruxboard is a private, invite-only companion for Tindeq climbing assessments. Members upload Tindeq CSV exports against shared, immutable protocols; the application preserves private source evidence and can compare eligible results through protocol-specific leaderboards and progress charts.
 
-The first release targets rate of force development (RFD). Ranking is intentionally disabled until `tests/oracles/rfd/manifest.json` contains an independently calculated, reviewed, and approved numeric oracle. Uploads remain private while that gate is closed. Maximum pull, critical force, and repeater fixtures are preserved for later adapters and are not ranked.
+The first release targets rate of force development (RFD). Ranking is intentionally disabled until `src/features/assessments/calculations/rfd-oracle-manifest.json` contains an independently calculated, reviewed, and approved numeric oracle. Uploads remain private while that gate is closed. Maximum pull, critical force, and repeater fixtures are preserved for later adapters and are not ranked.
 
 ## Stack
 

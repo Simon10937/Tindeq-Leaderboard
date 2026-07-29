@@ -60,7 +60,7 @@ create index source_reviews_active_idx on public.source_reviews (reviewer_id, at
 
 alter table public.audit_events drop constraint audit_events_event_type_check;
 alter table public.audit_events add constraint audit_events_event_type_check check (event_type in (
-  'group.created', 'membership.joined', 'membership.left', 'membership.removed',
+  'group.created', 'group.deleted', 'membership.joined', 'membership.left', 'membership.removed',
   'invitation.created', 'invitation.redeemed', 'invitation.revoked',
   'role.changed', 'account.deletion_requested', 'protocol.created', 'protocol.published',
   'protocol.cloned', 'protocol.archived', 'source.review_started', 'source.reviewed',
@@ -74,7 +74,10 @@ create or replace function public.start_source_review(target_attempt uuid, revie
 returns uuid language plpgsql security definer set search_path = '' as $$
 declare attempt public.assessment_attempts%rowtype; group_id uuid; review_id uuid;
 begin
-  select a.* into attempt from public.assessment_attempts a where a.id = target_attempt;
+  select a.* into attempt from public.assessment_attempts a
+    join public.assessment_sessions s on s.id = a.session_id and s.status = 'published'
+    join public.profiles p on p.id = a.owner_id and p.status = 'active'
+    where a.id = target_attempt;
   select s.group_id into group_id from public.assessment_sessions s where s.id = attempt.session_id;
   if attempt.id is null or not private.has_group_role(group_id, array['owner','admin']::public.group_role[])
     then raise exception 'forbidden'; end if;
@@ -87,11 +90,39 @@ begin
 end;
 $$;
 
+create or replace function private.refresh_session_publication(target_session uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+declare session public.assessment_sessions%rowtype; winner record;
+begin
+  select * into session from public.assessment_sessions where id = target_session and status = 'published' for update;
+  if session.id is null then return; end if;
+  select a.id as attempt_id, m.id as metric_run_id, a.trust_status into winner
+  from public.assessment_attempts a join public.metric_runs m on m.attempt_id = a.id and m.is_current and m.oracle_approved
+  where a.session_id = session.id and a.ingestion_status = 'ready'
+    and a.inclusion_status = 'included' and a.moderation_status = 'clear'
+  order by m.primary_metric desc, a.ordinal, a.id limit 1;
+  if winner.attempt_id is null then
+    delete from public.group_publications where session_id = session.id;
+    return;
+  end if;
+  insert into public.group_publications (session_id, group_id, owner_id, protocol_version_id, hand,
+    attempt_id, metric_run_id, authoritative_captured_at, trust_status)
+  values (session.id, session.group_id, session.owner_id, session.protocol_version_id, session.hand,
+    winner.attempt_id, winner.metric_run_id, session.declared_test_at, winner.trust_status)
+  on conflict (session_id) do update set attempt_id = excluded.attempt_id, metric_run_id = excluded.metric_run_id,
+    trust_status = excluded.trust_status, published_at = now();
+end;
+$$;
+revoke all on function private.refresh_session_publication(uuid) from public, anon, authenticated;
+
 create or replace function public.moderate_attempt(target_attempt uuid, action text, action_reason text)
 returns void language plpgsql security definer set search_path = '' as $$
 declare attempt public.assessment_attempts%rowtype; group_id uuid; audit_event_name text;
 begin
-  select a.* into attempt from public.assessment_attempts a where a.id = target_attempt for update;
+  select a.* into attempt from public.assessment_attempts a
+    join public.assessment_sessions published_session on published_session.id = a.session_id and published_session.status = 'published'
+    join public.profiles p on p.id = a.owner_id and p.status = 'active'
+    where a.id = target_attempt for update of a;
   select s.group_id into group_id from public.assessment_sessions s where s.id = attempt.session_id;
   if attempt.id is null or not private.has_group_role(group_id, array['owner','admin']::public.group_role[])
     then raise exception 'forbidden'; end if;
@@ -111,6 +142,7 @@ begin
     update public.group_publications set trust_status = 'admin_verified' where attempt_id = target_attempt;
     audit_event_name := 'attempt.verified';
   else raise exception 'unsupported_action'; end if;
+  perform private.refresh_session_publication(attempt.session_id);
   insert into public.audit_events (group_id, actor_id, event_type, target_type, target_id)
     values (group_id, auth.uid(), audit_event_name, 'attempt', target_attempt);
 end;
@@ -130,8 +162,8 @@ begin
   select a.id, p.display_name, f.name, s.hand, s.declared_test_at, a.ingestion_status,
     a.moderation_status, a.trust_status, m.primary_metric, m.relative_metric
   from public.assessment_attempts a
-  join public.assessment_sessions s on s.id = a.session_id and s.group_id = target_group
-  join public.profiles p on p.id = a.owner_id
+  join public.assessment_sessions s on s.id = a.session_id and s.group_id = target_group and s.status = 'published'
+  join public.profiles p on p.id = a.owner_id and p.status = 'active'
   join public.protocol_versions v on v.id = s.protocol_version_id
   join public.protocol_families f on f.id = v.family_id
   left join public.metric_runs m on m.attempt_id = a.id and m.is_current
@@ -140,7 +172,7 @@ end;
 $$;
 
 create or replace function public.resolve_source_review(target_review uuid)
-returns table(object_path text, original_filename text)
+returns table(object_path text, original_filename text, reviewer_id uuid)
 language plpgsql security definer set search_path = '' as $$
 declare review public.source_reviews%rowtype;
 begin
@@ -152,18 +184,36 @@ begin
   if review.id is null then raise exception 'review_unavailable'; end if;
 
   return query
-  select a.object_path, a.original_filename
-  from public.assessment_attempts a where a.id = review.attempt_id;
+  select a.object_path, a.original_filename, review.reviewer_id
+  from public.assessment_attempts a
+  join public.assessment_sessions s on s.id = a.session_id and s.status = 'published'
+  join public.profiles p on p.id = a.owner_id and p.status = 'active'
+  where a.id = review.attempt_id;
+end;
+$$;
+
+create or replace function public.complete_source_review(target_review uuid, completing_reviewer uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+declare review public.source_reviews%rowtype;
+begin
+  if auth.role() <> 'service_role' then raise exception 'forbidden'; end if;
+  select r.* into review from public.source_reviews r
+    where r.id = target_review and r.reviewer_id = completing_reviewer and r.status = 'active'
+      and r.expires_at > now()
+    for update;
+  if review.id is null then raise exception 'review_unavailable'; end if;
   update public.source_reviews set status = 'closed', closed_at = now() where id = review.id;
   insert into public.audit_events (group_id, actor_id, event_type, target_type, target_id)
-    values (review.group_id, auth.uid(), 'source.reviewed', 'source_review', review.id);
+    values (review.group_id, completing_reviewer, 'source.reviewed', 'source_review', review.id);
 end;
 $$;
 
 revoke all on function public.start_source_review(uuid, text), public.moderate_attempt(uuid, text, text),
   public.list_group_moderation(uuid), public.resolve_source_review(uuid) from public, anon;
+revoke all on function public.complete_source_review(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.start_source_review(uuid, text), public.moderate_attempt(uuid, text, text),
   public.list_group_moderation(uuid), public.resolve_source_review(uuid) to authenticated;
+grant execute on function public.complete_source_review(uuid, uuid) to service_role;
 
 alter table public.source_reviews enable row level security;
 create policy source_reviews_admin_read on public.source_reviews for select to authenticated
@@ -175,7 +225,19 @@ grant select on public.leaderboard_entries, public.group_trace_curves to authent
 
 create or replace view public.group_audit_events with (security_invoker = true) as
 select id, group_id, coalesce(actor_tombstone, actor_id) as actor_reference,
-  event_type, target_type, target_id, date_trunc('minute', created_at) as occurred_at
+  event_type, target_type, coalesce(target_tombstone, target_id) as target_id, date_trunc('minute', created_at) as occurred_at
 from public.audit_events;
 
-grant select on public.group_audit_events to authenticated;
+create or replace function public.list_group_audit_events(target_group uuid)
+returns table(id bigint, group_id uuid, actor_reference uuid, event_type text, target_type text, target_id uuid, occurred_at timestamptz)
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not private.has_group_role(target_group, array['owner','admin']::public.group_role[])
+    then raise exception 'forbidden'; end if;
+  return query select e.id, e.group_id, coalesce(e.actor_tombstone, e.actor_id), e.event_type, e.target_type,
+    coalesce(e.target_tombstone, e.target_id), date_trunc('minute', e.created_at)
+  from public.audit_events e where e.group_id = target_group order by e.created_at desc, e.id desc limit 100;
+end;
+$$;
+revoke all on function public.list_group_audit_events(uuid) from public, anon;
+grant execute on function public.list_group_audit_events(uuid) to authenticated;

@@ -36,7 +36,7 @@ export async function signIn(form: FormData) {
     await supabase.auth.signOut();
     authMessage("This account is not available.");
   }
-  redirect("/groups");
+  redirect(field(form, "next") === "/invite" ? "/invite" : "/groups");
 }
 
 export async function signOut() {

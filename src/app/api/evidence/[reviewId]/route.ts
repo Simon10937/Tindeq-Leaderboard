@@ -16,6 +16,11 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ re
   const admin = createAdminClient();
   const { data: source, error: sourceError } = await admin.storage.from("assessment-evidence").download(evidence.object_path);
   if (sourceError || !source) return NextResponse.json({ error: "Evidence file was not found." }, { status: 404 });
+  const { error: completionError } = await admin.rpc("complete_source_review", {
+    target_review: reviewId,
+    completing_reviewer: evidence.reviewer_id,
+  });
+  if (completionError) return NextResponse.json({ error: "Evidence review could not be recorded." }, { status: 503 });
   return new NextResponse(await source.arrayBuffer(), { status: 200, headers: {
     "Cache-Control": "private, no-store",
     "Content-Disposition": `attachment; filename="${attachmentName(evidence.original_filename)}"`,

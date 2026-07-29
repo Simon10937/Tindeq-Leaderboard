@@ -26,7 +26,8 @@ export async function runLifecycleBatch(options: { limit?: number; replayJobId?:
       return { id: job.job_id, phase: job.phase, outcome: "advanced" as const };
     } catch (cause) {
       const errorCode = cause instanceof Error ? cause.message.slice(0, 80) : "unknown_lifecycle_error";
-      await admin.rpc("fail_account_deletion_job", { target_job: job.job_id, claim_worker: workerId, error_code: errorCode });
+      const { error: failureError } = await admin.rpc("fail_account_deletion_job", { target_job: job.job_id, claim_worker: workerId, error_code: errorCode });
+      if (failureError) throw new Error("lifecycle_failure_checkpoint_failed");
       return { id: job.job_id, phase: job.phase, outcome: "failed" as const };
     }
   }));
@@ -36,9 +37,15 @@ export async function runLifecycleBatch(options: { limit?: number; replayJobId?:
 
 async function processPhase(admin: AdminClient, job: DeletionJob, workerId: string) {
   if (job.phase === "revoke") {
+    const { data: identity, error: identityError } = await admin.auth.admin.getUserById(job.user_id);
+    if (identityError && identityError.status !== 404) throw new Error("identity_lookup_failed");
+    const invitationCleanup = identity.user?.email
+      ? expectSuccess(admin.from("group_invitations").delete().eq("email_normalized", identity.user.email.toLowerCase()), "invitation_cleanup_failed")
+      : Promise.resolve();
     await Promise.all([
       expectSuccess(admin.from("group_publications").delete().eq("owner_id", job.user_id), "publication_revoke_failed"),
       expectSuccess(admin.from("source_reviews").delete().eq("reviewer_id", job.user_id), "review_revoke_failed"),
+      invitationCleanup,
       admin.auth.admin.signOut(job.user_id, "global").then(({ error }) => {
         if (error && error.status !== 404) throw new Error("session_revoke_failed");
       }),
@@ -47,9 +54,15 @@ async function processPhase(admin: AdminClient, job: DeletionJob, workerId: stri
     return;
   }
   if (job.phase === "evidence") {
-    const { data: attempts, error } = await admin.from("assessment_attempts").select("object_path").eq("owner_id", job.user_id);
-    if (error) throw new Error("evidence_inventory_failed");
-    const paths = (attempts ?? []).map((row) => row.object_path);
+    const paths: string[] = [];
+    const pageSize = 500;
+    for (let offset = 0; ; offset += pageSize) {
+      const { data: attempts, error } = await admin.from("assessment_attempts").select("object_path")
+        .eq("owner_id", job.user_id).order("id").range(offset, offset + pageSize - 1);
+      if (error) throw new Error("evidence_inventory_failed");
+      paths.push(...(attempts ?? []).map((row) => row.object_path));
+      if ((attempts ?? []).length < pageSize) break;
+    }
     for (let offset = 0; offset < paths.length; offset += 100) {
       const { error: removeError } = await admin.storage.from("assessment-evidence").remove(paths.slice(offset, offset + 100));
       if (removeError) throw new Error("evidence_delete_failed");

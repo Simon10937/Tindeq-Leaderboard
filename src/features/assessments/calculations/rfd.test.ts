@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { evaluateRfdCapability, isRfdRankingEnabled } from "./index";
 import { calculateRfd2080, RFD_20_80_ALGORITHM_VERSION } from "./rfd";
 import { parseTindeqRfdCsv, TINDEQ_RFD_PARSER_VERSION } from "../parsers/rfd";
+import oracleManifest from "./rfd-oracle-manifest.json";
 
 const fixturePath = resolve("tests/fixtures/tindeq/rfd/rfd-test-try-2.csv");
 const fixtureBytes = readFileSync(fixturePath);
@@ -94,7 +95,7 @@ describe("20-80 RFD calculation", () => {
 
 describe("RFD capability gate", () => {
   it("keeps application ranking disabled for a pending manifest", () => {
-    expect(isRfdRankingEnabled({ status: "pending_independent_review" }, TINDEQ_RFD_PARSER_VERSION, RFD_20_80_ALGORITHM_VERSION)).toBe(false);
+    expect(isRfdRankingEnabled(oracleManifest, TINDEQ_RFD_PARSER_VERSION, RFD_20_80_ALGORITHM_VERSION)).toBe(false);
   });
   it("keeps the real fixture unranked without an independent numeric oracle", () => {
     expect(fixtureSha256).toBe("C17BF8A1A891015519152A9FE3D85E2B6CD8DAAA1D97FA286C7F8683BCBAFC21");

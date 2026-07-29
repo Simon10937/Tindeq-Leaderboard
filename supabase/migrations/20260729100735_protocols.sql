@@ -96,6 +96,10 @@ declare family_id uuid; version_id uuid;
 begin
   if not private.has_group_role(target_group, array['owner','admin']::public.group_role[])
     then raise exception 'forbidden'; end if;
+  if (draft ->> 'lowerPercent')::numeric <> 20
+    or (draft ->> 'upperPercent')::numeric <> 80
+    or (draft ->> 'minimumPeakForceN')::numeric <= 0
+    then raise exception 'invalid_rfd_settings'; end if;
   insert into public.protocol_families (group_id, assessment_type, name, created_by)
   values (target_group, 'rfd', draft ->> 'name', auth.uid()) returning id into family_id;
   insert into public.protocol_versions (
@@ -186,7 +190,7 @@ grant execute on function public.clone_protocol_version(uuid), public.archive_pr
 
 alter table public.audit_events drop constraint audit_events_event_type_check;
 alter table public.audit_events add constraint audit_events_event_type_check check (event_type in (
-  'group.created', 'membership.joined', 'membership.left', 'membership.removed',
+  'group.created', 'group.deleted', 'membership.joined', 'membership.left', 'membership.removed',
   'invitation.created', 'invitation.redeemed', 'invitation.revoked',
   'role.changed', 'account.deletion_requested', 'protocol.created', 'protocol.published',
   'protocol.cloned', 'protocol.archived'

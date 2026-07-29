@@ -62,6 +62,8 @@ export async function redeemInvitation(form: FormData) {
   if (!parsed.success) fail("/invite", "This invitation is invalid.");
   const input = parsed.data!;
   const supabase = await createClient();
+  const { data: claims } = await supabase.auth.getClaims();
+  if (!claims?.claims) redirect("/sign-in?next=/invite&message=Sign in with the invited email address.");
   const { data, error } = await supabase.rpc("redeem_group_invitation", { raw_token: input.token });
   if (error || !data) fail("/invite", "The invitation is expired, used, or belongs to another account.");
   redirect(`/groups/${data}?message=You joined the group.`);
@@ -73,6 +75,14 @@ export async function leaveGroup(form: FormData) {
   const { error } = await supabase.rpc("leave_group", { target_group: groupId });
   if (error) fail(`/groups/${groupId}`, "Owners must transfer or delete their group before leaving.");
   redirect("/groups?message=You left the group.");
+}
+
+export async function deleteGroup(form: FormData) {
+  const groupId = value(form, "groupId");
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("delete_group", { target_group: groupId });
+  if (error) fail(`/groups/${groupId}`, "Only the group owner can delete this group.");
+  redirect("/groups?message=Group deleted.");
 }
 
 export async function removeMember(form: FormData) {

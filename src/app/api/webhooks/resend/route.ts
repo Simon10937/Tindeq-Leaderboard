@@ -30,10 +30,17 @@ export async function POST(request: Request) {
   };
   const providerId = event.data?.email_id;
   if (providerId && deliveryStatus[event.type]) {
-    await createAdminClient()
+    const predecessors: Record<string, string[]> = {
+      sent: ["queued", "sent"], delivered: ["queued", "sent", "delivered"],
+      failed: ["queued", "sent", "failed"], bounced: ["queued", "sent", "delivered", "bounced"],
+    };
+    const status = deliveryStatus[event.type];
+    const { error } = await createAdminClient()
       .from("group_invitations")
-      .update({ delivery_status: deliveryStatus[event.type], updated_at: new Date().toISOString() })
-      .eq("provider_email_id", providerId);
+      .update({ delivery_status: status, updated_at: new Date().toISOString() })
+      .eq("provider_email_id", providerId)
+      .in("delivery_status", predecessors[status]);
+    if (error) return new NextResponse("Delivery status unavailable", { status: 503 });
   }
   return NextResponse.json({ received: true });
 }

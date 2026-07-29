@@ -12,7 +12,7 @@ create table public.assessment_sessions (
   protocol_version_id uuid not null,
   hand public.hand_side not null,
   declared_test_at timestamptz not null,
-  declared_timezone text not null,
+  declared_timezone text not null check (char_length(declared_timezone) between 1 and 100),
   body_weight_n double precision check (body_weight_n is null or body_weight_n > 0),
   protocol_adherence_confirmed boolean not null check (protocol_adherence_confirmed),
   status public.manifest_status not null default 'draft',
@@ -20,6 +20,8 @@ create table public.assessment_sessions (
   created_at timestamptz not null default now(),
   published_at timestamptz,
   unique (id, owner_id),
+  unique (id, group_id, owner_id, protocol_version_id, hand),
+  check (declared_test_at >= timestamptz '2000-01-01'),
   foreign key (protocol_version_id, group_id) references public.protocol_versions(id, group_id) on delete restrict
 );
 
@@ -47,10 +49,12 @@ create table public.assessment_attempts (
   failure_code text,
   processing_claimed_at timestamptz,
   processing_lease_expires_at timestamptz,
+  processing_token uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (session_id, ordinal),
   unique (owner_id, source_sha256),
+  unique (id, session_id, owner_id),
   foreign key (session_id, owner_id) references public.assessment_sessions(id, owner_id) on delete cascade
 );
 
@@ -66,6 +70,7 @@ create table public.force_traces (
   sample_count integer not null check (sample_count >= 2),
   duration_us bigint not null check (duration_us > 0),
   created_at timestamptz not null default now(),
+  unique (attempt_id, owner_id),
   check (cardinality(elapsed_us) = sample_count and cardinality(force_n) = sample_count)
 );
 
@@ -85,6 +90,7 @@ create table public.metric_runs (
   created_at timestamptz not null default now(),
   unique (attempt_id, parser_version, algorithm_version)
 );
+alter table public.metric_runs add constraint metric_runs_id_attempt_owner_key unique (id, attempt_id, owner_id);
 
 create unique index metric_runs_current_attempt_idx on public.metric_runs (attempt_id) where is_current;
 
@@ -100,6 +106,12 @@ create table public.group_publications (
   trust_status public.trust_status not null,
   published_at timestamptz not null default now(),
   foreign key (protocol_version_id, group_id) references public.protocol_versions(id, group_id) on delete restrict
+  ,foreign key (session_id, group_id, owner_id, protocol_version_id, hand)
+    references public.assessment_sessions(id, group_id, owner_id, protocol_version_id, hand) on delete cascade
+  ,foreign key (attempt_id, session_id, owner_id)
+    references public.assessment_attempts(id, session_id, owner_id) on delete cascade
+  ,foreign key (metric_run_id, attempt_id, owner_id)
+    references public.metric_runs(id, attempt_id, owner_id) on delete cascade
 );
 
 create index group_publications_leaderboard_idx
@@ -131,6 +143,8 @@ begin
   if file_count < 1 or file_count > least(10, protocol.maximum_attempts) then raise exception 'invalid_file_count'; end if;
   if not adherence_confirmed then raise exception 'protocol_adherence_required'; end if;
   if body_weight_newtons is not null and body_weight_newtons <= 0 then raise exception 'invalid_body_weight'; end if;
+  if declared_at > now() + interval '5 minutes' then raise exception 'invalid_declared_time'; end if;
+  if char_length(declared_timezone) not between 1 and 100 then raise exception 'invalid_declared_timezone'; end if;
 
   insert into public.assessment_sessions (
     id, owner_id, group_id, protocol_version_id, hand, declared_test_at, declared_timezone,
@@ -164,9 +178,13 @@ begin
   select s.* into session from public.assessment_sessions s where s.id = target_session for update;
   if session.id is null or session.owner_id <> auth.uid() or not private.current_account_active()
     then raise exception 'forbidden'; end if;
+  if not private.has_group_role(session.group_id, array['owner','admin','member']::public.group_role[])
+    or not exists (select 1 from public.protocol_versions v where v.id = session.protocol_version_id and v.state in ('published','locked'))
+    then raise exception 'session_context_unavailable'; end if;
   if session.status = 'published' then return session.id; end if;
   if (select count(*) from public.assessment_attempts a where a.session_id = session.id) <> session.expected_attempts
-    or exists (select 1 from public.assessment_attempts a where a.session_id = session.id and a.ingestion_status in ('pending','processing'))
+    or exists (select 1 from public.assessment_attempts a where a.session_id = session.id
+      and (a.ingestion_status in ('pending','processing') or (a.ingestion_status = 'rejected' and a.inclusion_status = 'included')))
     then raise exception 'session_unresolved'; end if;
   select a.id as attempt_id, m.id as metric_run_id, a.trust_status
     into winner
@@ -189,15 +207,65 @@ end;
 $$;
 
 create or replace function public.claim_assessment_attempt(target_attempt uuid)
-returns boolean language plpgsql security definer set search_path = '' as $$
-declare claimed_id uuid;
+returns uuid language plpgsql security definer set search_path = '' as $$
+declare claim_token uuid := gen_random_uuid(); claimed_id uuid;
 begin
   if not private.current_account_active() then raise exception 'forbidden'; end if;
   update public.assessment_attempts set ingestion_status = 'processing', processing_claimed_at = now(),
-    processing_lease_expires_at = now() + interval '2 minutes', updated_at = now()
-  where id = target_attempt and owner_id = auth.uid() and ingestion_status = 'pending'
+    processing_lease_expires_at = now() + interval '2 minutes', processing_token = claim_token, updated_at = now()
+  where id = target_attempt and owner_id = auth.uid()
+    and exists (select 1 from public.assessment_sessions s where s.id = assessment_attempts.session_id
+      and private.has_group_role(s.group_id, array['owner','admin','member']::public.group_role[]))
+    and (ingestion_status = 'pending' or (ingestion_status = 'processing' and processing_lease_expires_at <= now()))
   returning id into claimed_id;
-  return claimed_id is not null;
+  return case when claimed_id is null then null else claim_token end;
+end;
+$$;
+
+create or replace function public.complete_rfd_attempt(
+  target_attempt uuid, claim_token uuid, source_hash text, source_bytes integer,
+  parser text, vendor jsonb, trace_elapsed_us bigint[], trace_force_n double precision[],
+  algorithm text, primary_score double precision, relative_score double precision,
+  calculation jsonb, oracle_is_approved boolean
+) returns void language plpgsql security definer set search_path = '' as $$
+declare attempt public.assessment_attempts%rowtype; protocol_id uuid; attempt_group uuid; protocol_state public.protocol_state;
+begin
+  if auth.role() <> 'service_role' then raise exception 'forbidden'; end if;
+  select a.* into attempt from public.assessment_attempts a
+    where a.id = target_attempt and a.ingestion_status = 'processing' and a.processing_token = claim_token for update;
+  if attempt.id is null then raise exception 'stale_processing_claim'; end if;
+  select s.protocol_version_id, s.group_id, v.state into protocol_id, attempt_group, protocol_state
+    from public.assessment_sessions s join public.protocol_versions v on v.id = s.protocol_version_id
+    where s.id = attempt.session_id;
+  if protocol_state not in ('published', 'locked') or not exists (
+    select 1 from public.group_memberships m where m.group_id = attempt_group and m.user_id = attempt.owner_id and m.status = 'active'
+  ) then raise exception 'attempt_context_unavailable'; end if;
+  if source_hash !~ '^[A-F0-9]{64}$' or source_bytes not between 1 and 5242880
+    then raise exception 'invalid_source'; end if;
+  if cardinality(trace_elapsed_us) not between 2 and 100000 or cardinality(trace_elapsed_us) <> cardinality(trace_force_n)
+    then raise exception 'invalid_trace'; end if;
+  insert into public.force_traces (attempt_id, owner_id, elapsed_us, force_n, sample_count, duration_us)
+    values (attempt.id, attempt.owner_id, trace_elapsed_us, trace_force_n, cardinality(trace_elapsed_us), trace_elapsed_us[cardinality(trace_elapsed_us)]);
+  insert into public.metric_runs (attempt_id, owner_id, assessment_type, parser_version, algorithm_version,
+    primary_metric, relative_metric, calculation_payload, oracle_approved)
+    values (attempt.id, attempt.owner_id, 'rfd', parser, algorithm, primary_score, relative_score, calculation, oracle_is_approved);
+  update public.assessment_attempts set source_sha256 = source_hash, source_size_bytes = source_bytes,
+    ingestion_status = 'ready', parser_version = parser, vendor_payload = vendor, failure_code = null,
+    processing_lease_expires_at = null, processing_token = null, updated_at = now()
+    where id = attempt.id;
+  update public.protocol_versions set state = 'locked', locked_at = now()
+    where id = protocol_id and state = 'published';
+end;
+$$;
+
+create or replace function public.reject_rfd_attempt(target_attempt uuid, claim_token uuid, error_code text)
+returns boolean language plpgsql security definer set search_path = '' as $$
+begin
+  if auth.role() <> 'service_role' then raise exception 'forbidden'; end if;
+  update public.assessment_attempts set ingestion_status = 'rejected', failure_code = left(error_code, 80),
+    processing_lease_expires_at = null, processing_token = null, updated_at = now()
+  where id = target_attempt and ingestion_status = 'processing' and processing_token = claim_token;
+  return found;
 end;
 $$;
 
@@ -215,8 +283,12 @@ $$;
 
 revoke all on function public.publish_assessment_session(uuid) from public, anon;
 revoke all on function public.claim_assessment_attempt(uuid), public.set_attempt_inclusion(uuid, public.inclusion_status) from public, anon;
+revoke all on function public.complete_rfd_attempt(uuid, uuid, text, integer, text, jsonb, bigint[], double precision[], text, double precision, double precision, jsonb, boolean),
+  public.reject_rfd_attempt(uuid, uuid, text) from public, anon, authenticated;
 grant execute on function public.publish_assessment_session(uuid) to authenticated;
 grant execute on function public.claim_assessment_attempt(uuid), public.set_attempt_inclusion(uuid, public.inclusion_status) to authenticated;
+grant execute on function public.complete_rfd_attempt(uuid, uuid, text, integer, text, jsonb, bigint[], double precision[], text, double precision, double precision, jsonb, boolean),
+  public.reject_rfd_attempt(uuid, uuid, text) to service_role;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('assessment-evidence', 'assessment-evidence', false, 5242880, array['text/csv','text/plain','application/vnd.ms-excel'])

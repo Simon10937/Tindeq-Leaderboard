@@ -2,6 +2,20 @@ alter table public.account_deletion_jobs drop constraint account_deletion_jobs_u
 alter table public.account_deletion_jobs add constraint account_deletion_jobs_phase_check
   check (phase in ('revoke', 'evidence', 'database', 'identity', 'complete'));
 alter table public.account_deletion_jobs add column worker_id uuid;
+alter table public.account_deletion_jobs add column user_tombstone uuid;
+alter table public.account_deletion_jobs alter column user_id drop not null;
+
+alter table public.protocol_families add column creator_tombstone uuid;
+alter table public.protocol_families alter column created_by drop not null;
+alter table public.protocol_families drop constraint protocol_families_created_by_fkey;
+alter table public.protocol_families add constraint protocol_families_created_by_fkey foreign key (created_by)
+  references public.profiles(id) on delete set null;
+
+alter table public.protocol_versions add column creator_tombstone uuid;
+alter table public.protocol_versions alter column created_by drop not null;
+alter table public.protocol_versions drop constraint protocol_versions_created_by_fkey;
+alter table public.protocol_versions add constraint protocol_versions_created_by_fkey foreign key (created_by)
+  references public.profiles(id) on delete set null;
 
 alter table public.groups add column creator_tombstone uuid;
 alter table public.groups alter column created_by drop not null;
@@ -44,7 +58,9 @@ begin
   update public.account_deletion_jobs set phase = next_phase,
     status = case when next_phase = 'complete' then 'complete'::public.deletion_job_status else 'pending'::public.deletion_job_status end,
     attempts = 0, next_run_at = now(), lease_expires_at = null, worker_id = null,
-    last_error_code = null, updated_at = now(), completed_at = case when next_phase = 'complete' then now() else null end
+    last_error_code = null, updated_at = now(), completed_at = case when next_phase = 'complete' then now() else null end,
+    user_tombstone = case when next_phase = 'complete' then coalesce(user_tombstone, gen_random_uuid()) else user_tombstone end,
+    user_id = case when next_phase = 'complete' then null else user_id end
   where id = target_job and worker_id = claim_worker and status = 'running' and phase = expected_phase;
   if not found then raise exception 'stale_job_lease'; end if;
 end;
@@ -76,7 +92,13 @@ begin
   if target_user is null then raise exception 'stale_job_lease'; end if;
   update public.audit_events set actor_tombstone = coalesce(actor_tombstone, gen_random_uuid()), actor_id = null
     where actor_id = target_user;
+  update public.audit_events set target_tombstone = coalesce(target_tombstone, gen_random_uuid()), target_id = null
+    where target_id = target_user;
   update public.groups set creator_tombstone = coalesce(creator_tombstone, gen_random_uuid()), created_by = null
+    where created_by = target_user;
+  update public.protocol_families set creator_tombstone = coalesce(creator_tombstone, gen_random_uuid()), created_by = null
+    where created_by = target_user;
+  update public.protocol_versions set creator_tombstone = coalesce(creator_tombstone, gen_random_uuid()), created_by = null
     where created_by = target_user;
   delete from public.group_invitations where invited_by = target_user or redeemed_by = target_user;
   delete from public.profiles where id = target_user;

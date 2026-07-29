@@ -5,6 +5,6 @@ export type AuditEvent = { id: number; group_id: string; actor_reference: string
 
 export async function listGroupAuditEvents(groupId: string): Promise<AuditEvent[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("group_audit_events").select("id,group_id,actor_reference,event_type,target_type,target_id,occurred_at").eq("group_id", groupId).order("occurred_at", { ascending: false }).limit(100);
+  const { data, error } = await supabase.rpc("list_group_audit_events", { target_group: groupId });
   return error ? [] : (data ?? []) as AuditEvent[];
 }
