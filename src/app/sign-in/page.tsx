@@ -14,7 +14,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
           <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
           <button className="button">Sign in</button>
         </form>
-        <p><Link href="/forgot-password">Forgot password?</Link> · <Link href="/sign-up">Create account</Link></p>
+        <p><Link href="/forgot-password">Forgot password?</Link> · <Link href={next === "/invite" ? "/sign-up?next=/invite" : "/sign-up"}>Create account</Link></p>
       </section>
     </main>
   );

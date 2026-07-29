@@ -77,6 +77,7 @@ begin
   select a.* into attempt from public.assessment_attempts a
     join public.assessment_sessions s on s.id = a.session_id and s.status = 'published'
     join public.profiles p on p.id = a.owner_id and p.status = 'active'
+    join public.group_memberships m on m.group_id = s.group_id and m.user_id = a.owner_id and m.status = 'active'
     where a.id = target_attempt;
   select s.group_id into group_id from public.assessment_sessions s where s.id = attempt.session_id;
   if attempt.id is null or not private.has_group_role(group_id, array['owner','admin']::public.group_role[])
@@ -188,6 +189,7 @@ begin
   from public.assessment_attempts a
   join public.assessment_sessions s on s.id = a.session_id and s.status = 'published'
   join public.profiles p on p.id = a.owner_id and p.status = 'active'
+  join public.group_memberships m on m.group_id = s.group_id and m.user_id = a.owner_id and m.status = 'active'
   where a.id = review.attempt_id;
 end;
 $$;

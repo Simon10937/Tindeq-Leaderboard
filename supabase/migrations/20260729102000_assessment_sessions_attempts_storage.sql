@@ -214,8 +214,10 @@ begin
   update public.assessment_attempts set ingestion_status = 'processing', processing_claimed_at = now(),
     processing_lease_expires_at = now() + interval '2 minutes', processing_token = claim_token, updated_at = now()
   where id = target_attempt and owner_id = auth.uid()
-    and exists (select 1 from public.assessment_sessions s where s.id = assessment_attempts.session_id
-      and private.has_group_role(s.group_id, array['owner','admin','member']::public.group_role[]))
+    and exists (select 1 from public.assessment_sessions s
+      join public.protocol_versions v on v.id = s.protocol_version_id and v.state in ('published','locked')
+      where s.id = assessment_attempts.session_id
+        and private.has_group_role(s.group_id, array['owner','admin','member']::public.group_role[]))
     and (ingestion_status = 'pending' or (ingestion_status = 'processing' and processing_lease_expires_at <= now()))
   returning id into claimed_id;
   return case when claimed_id is null then null else claim_token end;

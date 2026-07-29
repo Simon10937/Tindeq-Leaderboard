@@ -30,12 +30,16 @@ export async function POST(request: Request) {
   };
   const providerId = event.data?.email_id;
   if (providerId && deliveryStatus[event.type]) {
+    const admin = createAdminClient();
+    const { data: invitation, error: lookupError } = await admin.from("group_invitations")
+      .select("id").eq("provider_email_id", providerId).maybeSingle();
+    if (lookupError || !invitation) return new NextResponse("Delivery correlation unavailable", { status: 503 });
     const predecessors: Record<string, string[]> = {
       sent: ["queued", "sent"], delivered: ["queued", "sent", "delivered"],
       failed: ["queued", "sent", "failed"], bounced: ["queued", "sent", "delivered", "bounced"],
     };
     const status = deliveryStatus[event.type];
-    const { error } = await createAdminClient()
+    const { error } = await admin
       .from("group_invitations")
       .update({ delivery_status: status, updated_at: new Date().toISOString() })
       .eq("provider_email_id", providerId)

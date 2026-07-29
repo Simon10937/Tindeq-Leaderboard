@@ -17,7 +17,7 @@ export async function signUp(form: FormData) {
     password,
     options: {
       data: { display_name: displayName },
-      emailRedirectTo: `${getServerEnv().NEXT_PUBLIC_APP_URL}/api/auth/confirm?next=/groups`,
+      emailRedirectTo: `${getServerEnv().NEXT_PUBLIC_APP_URL}/api/auth/confirm?next=${field(form, "next") === "/invite" ? "/invite" : "/groups"}`,
     },
   });
   if (error) authMessage("Unable to create the account. Check the details and try again.");
