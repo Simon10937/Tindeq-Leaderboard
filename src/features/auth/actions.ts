@@ -26,12 +26,13 @@ export async function signUp(form: FormData) {
 
 export async function signIn(form: FormData) {
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email: field(form, "email").toLowerCase(),
     password: field(form, "password"),
   });
-  if (error) authMessage("Email or password was not accepted.");
-  const { data: profile } = await supabase.from("profiles").select("status").maybeSingle();
+  const user = data.user;
+  if (error || !user) return authMessage("Email or password was not accepted.");
+  const { data: profile } = await supabase.from("profiles").select("status").eq("id", user.id).maybeSingle();
   if (!profile || profile.status !== "active") {
     await supabase.auth.signOut();
     authMessage("This account is not available.");
