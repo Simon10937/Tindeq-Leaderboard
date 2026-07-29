@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { LeaderboardFilterForm } from "@/components/leaderboard-filter-form";
+import { LeaderboardTable } from "@/components/leaderboard-table";
 import { getLeaderboard, parseLeaderboardFilters } from "@/features/leaderboards/queries";
 import { getProtocolVersionName } from "@/features/protocols/queries";
 
@@ -25,9 +26,10 @@ export default async function LeaderboardPage({
       <nav className="leaderboard-nav" aria-label="Leaderboard navigation">
         <Link className="brand" href="/dashboard">Cruxboard</Link>
         <div>
+          <Link href={`/dashboard?group=${groupId}&protocol=${protocolId}&hand=${filters.hand}&basis=${filters.basis}`}>Dashboard</Link>
           <Link href={`/groups/${groupId}`}>Group</Link>
           <Link href={`/groups/${groupId}/protocols`}>Protocols</Link>
-          <Link href={`/groups/${groupId}/protocols/${protocolId}/progress`}>Progress</Link>
+          <Link href={`/groups/${groupId}/protocols/${protocolId}/progress?hand=${filters.hand}&basis=${filters.basis}`}>Progress</Link>
         </div>
       </nav>
 
@@ -42,15 +44,12 @@ export default async function LeaderboardPage({
           <div><p className="eyebrow">Current standings</p><h2 id="rankings-title">{filters.window.kind === "latest" ? "Latest results" : "Best results"}</h2></div>
           <span>{rows.length} climbers · {unit}</span>
         </div>
-        {rows.length === 0 ? <p role="status">No eligible results match these filters.</p> : (
-          <div className="table-scroll">
-            <table className="leaderboard-table">
-              <caption>All scores use this protocol version and the {filters.hand} hand.</caption>
-              <thead><tr><th scope="col">Rank</th><th scope="col">Climber</th><th scope="col">Score ({unit})</th><th scope="col">Captured</th><th scope="col">Trust</th></tr></thead>
-              <tbody>{rows.map((row) => <tr key={row.attemptId}><td><span className="rank-badge">{row.rank}</span></td><th scope="row">{row.displayName}</th><td className="score-cell">{formatScore(row.selectedScore)}</td><td><time dateTime={row.authoritativeCapturedAt}>{formatDate(row.authoritativeCapturedAt)}</time></td><td>{row.trustStatus === "admin_verified" ? "Admin verified" : "Self-attested"}</td></tr>)}</tbody>
-            </table>
-          </div>
-        )}
+        <LeaderboardTable
+          rows={rows}
+          unit={unit}
+          caption={`All scores use this protocol version and the ${filters.hand} hand.`}
+          emptyMessage="No eligible results match these filters."
+        />
       </section>
 
       <details className="leaderboard-filters">
@@ -63,6 +62,3 @@ export default async function LeaderboardPage({
     </main>
   );
 }
-
-function formatScore(value: number) { return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(value); }
-function formatDate(value: string) { return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(value)); }

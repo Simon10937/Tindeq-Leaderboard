@@ -6,6 +6,7 @@ import type {
   Hand,
   LeaderboardEntry,
   LeaderboardFilters,
+  ProgressEntry,
   RankedLeaderboardEntry,
   ScoreBasis,
   TraceCurve,
@@ -55,10 +56,21 @@ export async function getLeaderboard(query: LeaderboardQuery): Promise<RankedLea
 }
 
 export async function getProgress(query: LeaderboardQuery) {
-  const entries = await listEntries(query);
-  const progress = selectProgressEntries(entries, query.filters);
+  const progress = await getProgressEntries(query);
   const traces = await listTraces(query, progress.map((entry) => entry.attemptId));
   return { progress, traces };
+}
+
+export async function getProgressEntries(query: LeaderboardQuery): Promise<ProgressEntry[]> {
+  const entries = await listEntries(query);
+  return selectProgressEntries(entries, query.filters);
+}
+
+export async function getRecentActivity(query: LeaderboardQuery, limit = 8): Promise<ProgressEntry[]> {
+  const entries = await listEntries(query, { ascending: false, limit });
+  return selectProgressEntries(entries, query.filters)
+    .sort((left, right) => Date.parse(right.authoritativeCapturedAt) - Date.parse(left.authoritativeCapturedAt))
+    .slice(0, limit);
 }
 
 export function parseLeaderboardFilters(search: Record<string, string | string[] | undefined>): LeaderboardFilters {
@@ -70,7 +82,10 @@ export function parseLeaderboardFilters(search: Record<string, string | string[]
   return { basis, hand, trust, window: parseWindow(search) };
 }
 
-async function listEntries(query: LeaderboardQuery): Promise<LeaderboardEntry[]> {
+async function listEntries(
+  query: LeaderboardQuery,
+  options: { ascending?: boolean; limit?: number } = {},
+): Promise<LeaderboardEntry[]> {
   const supabase = await createClient();
   let request = supabase
     .rpc("list_leaderboard_entries", {
@@ -86,7 +101,12 @@ async function listEntries(query: LeaderboardQuery): Promise<LeaderboardEntry[]>
   if (bounds.from) request = request.gte("authoritative_captured_at", bounds.from);
   if (bounds.to) request = request.lte("authoritative_captured_at", bounds.to);
 
-  const { data, error } = await request.order("authoritative_captured_at", { ascending: true });
+  if (options.limit !== undefined) {
+    request = request
+      .not(query.filters.basis === "absolute" ? "absolute_score" : "relative_score", "is", null)
+      .limit(options.limit);
+  }
+  const { data, error } = await request.order("authoritative_captured_at", { ascending: options.ascending ?? true });
   if (error) throw new Error("Unable to load leaderboard entries");
   return ((data ?? []) as RawLeaderboardEntry[]).map(mapEntry);
 }

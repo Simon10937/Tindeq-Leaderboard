@@ -17,7 +17,7 @@ export function AppShell({
     <div className="app-frame">
       <aside className="sidebar">
         <Link className="brand" href="/dashboard">Cruxboard</Link>
-        <Link className="side-link leaderboard-home" href="/dashboard"><span>Leaderboard</span><small>Home</small></Link>
+        <Link className="side-link leaderboard-home" href="/dashboard"><span>Dashboard</span><small>Charts</small></Link>
         <nav aria-label="Groups">
           <p className="eyebrow">Your groups</p>
           {groups.map((item) => item.groups && (

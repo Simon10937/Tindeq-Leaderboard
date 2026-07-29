@@ -19,12 +19,20 @@ export default async function ProgressPage({
   const { progress, traces } = await getProgress({ groupId, protocolVersionId: protocolId, filters });
 
   return (
-    <main className="app-main standalone">
-      <header className="page-header">
+    <main className="app-main standalone leaderboard-page">
+      <nav className="leaderboard-nav" aria-label="Progress navigation">
+        <Link className="brand" href="/dashboard">Cruxboard</Link>
+        <div>
+          <Link href={`/dashboard?group=${groupId}&protocol=${protocolId}&view=progress&hand=${filters.hand}&basis=${filters.basis}`}>Dashboard</Link>
+          <Link href={`/groups/${groupId}/protocols/${protocolId}/leaderboard?hand=${filters.hand}&basis=${filters.basis}`}>Leaderboard</Link>
+          <Link href={`/groups/${groupId}/protocols`}>Protocols</Link>
+        </div>
+      </nav>
+
+      <header className="page-header leaderboard-header">
         <p className="eyebrow">Comparable RFD</p>
         <h1>Progress.</h1>
         <p>Chronological results and normalized force curves for one immutable protocol version.</p>
-        <p><Link href={`/groups/${groupId}/protocols/${protocolId}/leaderboard`}>← Leaderboard</Link></p>
       </header>
 
       <section className="panel" aria-labelledby="progress-filters">

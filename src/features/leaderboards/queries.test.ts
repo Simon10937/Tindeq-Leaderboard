@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   eq: vi.fn(),
   gte: vi.fn(),
   lte: vi.fn(),
+  limit: vi.fn(),
+  not: vi.fn(),
   order: vi.fn(),
   rpc: vi.fn(),
 }));
@@ -12,7 +14,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(async () => ({ rpc: mocks.rpc })),
 }));
 
-import { getLeaderboard } from "./queries";
+import { getLeaderboard, getRecentActivity } from "./queries";
 
 describe("getLeaderboard", () => {
   beforeEach(() => {
@@ -38,10 +40,12 @@ describe("getLeaderboard", () => {
       error: null,
     };
     mocks.order.mockResolvedValue(result);
-    mocks.lte.mockReturnValue({ order: mocks.order });
-    mocks.gte.mockReturnValue({ lte: mocks.lte, order: mocks.order });
-    mocks.eq.mockReturnValue({ gte: mocks.gte, lte: mocks.lte, order: mocks.order });
-    mocks.rpc.mockReturnValue({ eq: mocks.eq, gte: mocks.gte, lte: mocks.lte, order: mocks.order });
+    mocks.lte.mockReturnValue({ limit: mocks.limit, order: mocks.order });
+    mocks.gte.mockReturnValue({ lte: mocks.lte, limit: mocks.limit, order: mocks.order });
+    mocks.eq.mockReturnValue({ gte: mocks.gte, lte: mocks.lte, limit: mocks.limit, order: mocks.order });
+    mocks.limit.mockReturnValue({ order: mocks.order });
+    mocks.not.mockReturnValue({ limit: mocks.limit, order: mocks.order });
+    mocks.rpc.mockReturnValue({ eq: mocks.eq, gte: mocks.gte, lte: mocks.lte, not: mocks.not, limit: mocks.limit, order: mocks.order });
   });
 
   it("loads sanitized peer scores through the authorized leaderboard RPC", async () => {
@@ -58,5 +62,18 @@ describe("getLeaderboard", () => {
     });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ displayName: "Ava Chen", selectedScore: 1310, rank: 1 });
+  });
+
+  it("limits recent activity in the database before mapping it", async () => {
+    const rows = await getRecentActivity({
+      groupId: "group-1",
+      protocolVersionId: "protocol-1",
+      filters: { basis: "absolute", hand: "right", trust: "all", window: { kind: "all_time" } },
+    });
+
+    expect(mocks.limit).toHaveBeenCalledWith(8);
+    expect(mocks.not).toHaveBeenCalledWith("absolute_score", "is", null);
+    expect(mocks.order).toHaveBeenCalledWith("authoritative_captured_at", { ascending: false });
+    expect(rows).toHaveLength(1);
   });
 });

@@ -1,7 +1,8 @@
 begin;
-select plan(7);
+select plan(8);
 
 select has_table('public', 'profiles', 'profiles table exists');
+select has_table('public', 'dashboard_preferences', 'private dashboard preferences table exists');
 select has_table('public', 'assessment_attempts', 'attempt table exists');
 select has_view('public', 'leaderboard_entries', 'safe leaderboard view exists');
 select has_function('public', 'create_group', 'group creation RPC exists');
