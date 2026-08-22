@@ -218,6 +218,20 @@ label,
   grid-template-columns: minmax(150px, 0.7fr) minmax(180px, 1fr) 96px;
 }
 
+.auth-panel {
+  align-items: end;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.45fr);
+}
+
+.auth-actions {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .weekly-target h2,
 .section-heading h2,
 .panel-heading h2 {
@@ -364,6 +378,16 @@ label,
   border: 1px solid var(--primary);
   color: #fff;
   padding: 0 16px;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.button-secondary {
+  background: var(--surface);
+  color: var(--primary);
 }
 
 .text-button {
@@ -730,6 +754,7 @@ textarea {
 
   .tracker-welcome,
   .weekly-target,
+  .auth-panel,
   .latest-panel,
   .import-panel,
   .panel-heading,
@@ -750,6 +775,7 @@ textarea {
   }
 
   .import-actions,
+  .auth-actions,
   .file-picker {
     width: 100%;
   }
@@ -783,6 +809,7 @@ textarea {
   }
 
   .quick-actions,
+  .auth-actions,
   .stat-grid {
     grid-template-columns: 1fr;
   }

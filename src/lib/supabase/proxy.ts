@@ -3,6 +3,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getPublicEnv } from "@/lib/env";
 
 export async function updateSession(request: NextRequest) {
+  if (process.env.NEXT_PUBLIC_LOCAL_DEMO === "true") return NextResponse.next({ request });
+
   const env = getPublicEnv();
   let response = NextResponse.next({ request });
   const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
@@ -16,11 +18,6 @@ export async function updateSession(request: NextRequest) {
     },
   });
   const { data } = await supabase.auth.getClaims();
-  if (request.nextUrl.pathname === "/" && data?.claims) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
-    return NextResponse.redirect(url);
-  }
   const isProtected = request.nextUrl.pathname.startsWith("/dashboard");
   if (isProtected && !data?.claims) {
     const url = request.nextUrl.clone();

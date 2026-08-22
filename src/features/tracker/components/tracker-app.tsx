@@ -10,6 +10,7 @@ import { augmentStoredRepeaterMetrics } from "@/features/tracker/parsers/repeate
 import { parseCsvRows } from "@/features/tracker/parsers/tindeq-shared";
 import { buildTrackerSession, progressPointsForSession, validateImportContext, type ParsedTrackerCsv, type ProgressPoint, type TrackerMetricKey, type TrackerMode, type TrackerSession } from "@/features/tracker/types";
 import { createTrackerStore, type TrackerStore } from "@/features/tracker/storage/local-store";
+import { createSupabaseTrackerStore, createTrackerSupabaseClient, readTrackerAuthState, type TrackerAuthState } from "@/features/tracker/storage/supabase-store";
 
 type DraftImport = Readonly<{
   id: string;
@@ -37,7 +38,9 @@ const gripPresets = ["20mm edge", "15mm edge", "half crimp", "rehab half crimp",
 const weeklyTargetStorageKey = "tindeq-tracker-weekly-target";
 
 export function TrackerApp() {
+  const localStoreRef = useRef<TrackerStore | null>(null);
   const storeRef = useRef<TrackerStore | null>(null);
+  const supabaseRef = useRef<ReturnType<typeof createTrackerSupabaseClient>>(undefined);
   const refreshGenerationRef = useRef(0);
   const [sessions, setSessions] = useState<TrackerSession[]>([]);
   const [drafts, setDrafts] = useState<DraftImport[]>([]);
@@ -48,11 +51,35 @@ export function TrackerApp() {
   const [status, setStatus] = useState("Loading local tracker data...");
   const [reimportNoticeCount, setReimportNoticeCount] = useState(0);
   const [weeklyTarget, setWeeklyTarget] = useState(3);
+  const [authState, setAuthState] = useState<TrackerAuthState>({ status: "checking" });
+  const [authEmail, setAuthEmail] = useState("");
 
   useEffect(() => {
-    const store = createTrackerStore();
-    storeRef.current = store;
-    void refreshSessions(store).then(() => setStatus("Local tracker ready."));
+    const localStore = createTrackerStore();
+    localStoreRef.current = localStore;
+    storeRef.current = localStore;
+    const supabase = createTrackerSupabaseClient();
+    supabaseRef.current = supabase;
+
+    if (!supabase) {
+      window.setTimeout(() => {
+        setAuthState({ status: "local" });
+        void refreshSessions(localStore).then(() => setStatus("Local tracker ready."));
+      }, 0);
+      return;
+    }
+
+    void readTrackerAuthState(supabase).then((nextAuthState) => {
+      void applyAuthState(nextAuthState);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      void applyAuthState(session?.user ? { status: "signed-in", user: session.user } : { status: "signed-out" });
+    });
+
+    return () => listener.subscription.unsubscribe();
+    // This is the one-time tracker store/auth bootstrap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -164,6 +191,59 @@ export function TrackerApp() {
     setStatus(`${draft.filename} saved locally.`);
   }
 
+  async function requestMagicLink() {
+    const supabase = supabaseRef.current;
+    const email = authEmail.trim().toLowerCase();
+    if (!supabase || !email) return;
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: window.location.origin,
+        shouldCreateUser: false,
+      },
+    });
+    setStatus(error ? error.message : "Check your email for the private tracker sign-in link.");
+  }
+
+  async function signOutTracker() {
+    const supabase = supabaseRef.current;
+    if (supabase) await supabase.auth.signOut();
+    await activateLocalTrackerStore("Signed out. Showing local browser data.");
+  }
+
+  async function applyAuthState(nextAuthState: TrackerAuthState) {
+    setAuthState(nextAuthState);
+    if (nextAuthState.status === "signed-in" && nextAuthState.user) {
+      await activateSupabaseTrackerStore(nextAuthState.user.id);
+      return;
+    }
+
+    await activateLocalTrackerStore(nextAuthState.status === "local" ? "Local tracker ready." : "Sign in to save sessions privately in Supabase.");
+  }
+
+  async function activateSupabaseTrackerStore(userId: string) {
+    const supabase = supabaseRef.current;
+    const localStore = localStoreRef.current;
+    if (!supabase || !localStore) return;
+
+    const remoteStore = createSupabaseTrackerStore(supabase, userId);
+    storeRef.current = remoteStore;
+    setStatus("Syncing local tracker sessions to Supabase...");
+    const localSessions = await localStore.list();
+    await Promise.all(localSessions.map((session) => remoteStore.save(session)));
+    await refreshSessions(remoteStore);
+    setStatus(`Supabase tracker ready${localSessions.length > 0 ? `; synced ${localSessions.length} local session${localSessions.length === 1 ? "" : "s"}.` : "."}`);
+  }
+
+  async function activateLocalTrackerStore(nextStatus: string) {
+    const localStore = localStoreRef.current;
+    if (!localStore) return;
+    storeRef.current = localStore;
+    await refreshSessions(localStore);
+    setStatus(nextStatus);
+  }
+
   async function deleteSession(id: string) {
     const store = storeRef.current;
     if (!store) return;
@@ -254,6 +334,24 @@ export function TrackerApp() {
           <label className="target-control">Target
             <input type="number" min="1" max="14" value={weeklyTarget} onChange={(event) => updateWeeklyTarget(Number(event.currentTarget.value))} />
           </label>
+        </section>
+
+        <section className="tracker-panel auth-panel" aria-labelledby="auth-title">
+          <div>
+            <p className="eyebrow">Private data</p>
+            <h2 id="auth-title">{authTitle(authState)}</h2>
+            <p>{authDescription(authState)}</p>
+          </div>
+          {authState.status === "signed-in" ? (
+            <button className="button button-secondary" type="button" onClick={() => void signOutTracker()}>Sign out</button>
+          ) : (
+            <div className="auth-actions">
+              <label>Email
+                <input type="email" value={authEmail} autoComplete="email" placeholder="you@example.com" onChange={(event) => setAuthEmail(event.currentTarget.value)} />
+              </label>
+              <button className="button" type="button" onClick={() => void requestMagicLink()} disabled={authState.status === "local"}>Email sign-in link</button>
+            </div>
+          )}
         </section>
 
         <section className="quick-actions" aria-label="Quick actions">
@@ -625,6 +723,20 @@ function modeLabel(mode?: TrackerMode) {
   if (mode === "repeater") return "Repeater";
   if (mode === "unsupported_trace") return "Trace only";
   return "Invalid";
+}
+
+function authTitle(authState: TrackerAuthState) {
+  if (authState.status === "signed-in") return "Supabase sync on";
+  if (authState.status === "checking") return "Checking private sync";
+  if (authState.status === "local") return "Local browser mode";
+  return "Supabase sync off";
+}
+
+function authDescription(authState: TrackerAuthState) {
+  if (authState.status === "signed-in") return authState.user?.email ? `Signed in as ${authState.user.email}. New sessions save to Supabase.` : "Signed in. New sessions save to Supabase.";
+  if (authState.status === "checking") return "Looking for an existing Supabase session.";
+  if (authState.status === "local") return "Local demo mode is enabled, so sessions stay in this browser.";
+  return "Sign in with your pre-created Supabase user to save sessions privately across devices.";
 }
 
 function availableMetricText(parsed?: ParsedTrackerCsv) {
