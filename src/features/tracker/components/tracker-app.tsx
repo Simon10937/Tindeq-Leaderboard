@@ -58,8 +58,13 @@ export function TrackerApp() {
   }
 
   async function handleClipboardImport() {
+    if (isIosSafari()) {
+      setStatus("iOS Safari does not provide copied ZIP files to websites. Tap Choose Tindeq ZIP or CSVs and select the export from Files.");
+      return;
+    }
+
     if (!navigator.clipboard?.read) {
-      setStatus("This browser does not expose clipboard files to buttons. Use Choose Tindeq CSVs instead.");
+      setStatus("This browser does not expose clipboard files to buttons. Use Choose Tindeq ZIP or CSVs instead.");
       return;
     }
 
@@ -67,7 +72,7 @@ export function TrackerApp() {
       const clipboardItems = await navigator.clipboard.read();
       const files = await filesFromClipboardItems(clipboardItems);
       if (files.length === 0) {
-        setStatus("No files found on the clipboard. Copy the Tindeq export from the app, then tap Import from clipboard.");
+        setStatus("No files found on the clipboard. Mobile browsers often block copied ZIP files here; use Choose Tindeq ZIP or CSVs.");
         return;
       }
 
@@ -184,7 +189,7 @@ export function TrackerApp() {
             aria-label="Paste Tindeq CSV files"
           >
             <button className="button" type="button" onClick={() => void handleClipboardImport()}>Import from clipboard</button>
-            <span>Clipboard import works only when the browser exposes copied files. The ZIP picker is the reliable mobile path.</span>
+            <span>iOS Safari blocks copied ZIP files here. Save or share the Tindeq export to Files, then use the ZIP picker above.</span>
           </div>
         </div>
       </section>
@@ -309,6 +314,13 @@ function filesFromClipboard(clipboardData: DataTransfer): File[] {
     .filter((item) => item.kind === "file")
     .map((item) => item.getAsFile())
     .filter((file): file is File => file !== null);
+}
+
+function isIosSafari() {
+  const userAgent = navigator.userAgent;
+  const isIos = /iPad|iPhone|iPod/.test(userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isSafari = /^((?!chrome|android|crios|fxios).)*safari/i.test(userAgent);
+  return isIos && isSafari;
 }
 
 async function filesFromClipboardItems(items: readonly ClipboardItem[]): Promise<File[]> {
