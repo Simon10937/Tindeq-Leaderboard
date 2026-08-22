@@ -22,6 +22,7 @@ type DraftImport = Readonly<{
 }>;
 
 type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "notes">>;
+type SelectedMetric = "all" | TrackerMetricKey;
 
 const metricOptions: { key: TrackerMetricKey; label: string; mode?: TrackerMode }[] = [
   { key: "criticalForceN", label: "Critical force", mode: "endurance" },
@@ -35,7 +36,7 @@ export function TrackerApp() {
   const storeRef = useRef<TrackerStore | null>(null);
   const [sessions, setSessions] = useState<TrackerSession[]>([]);
   const [drafts, setDrafts] = useState<DraftImport[]>([]);
-  const [selectedMetric, setSelectedMetric] = useState<TrackerMetricKey>("criticalForceN");
+  const [selectedMetric, setSelectedMetric] = useState<SelectedMetric>("all");
   const [modeFilter, setModeFilter] = useState<"all" | TrackerMode>("all");
   const [gripFilter, setGripFilter] = useState("all");
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
@@ -156,7 +157,8 @@ export function TrackerApp() {
   const filteredSessions = sessions.filter((session) =>
     (modeFilter === "all" || session.mode === modeFilter) &&
     (gripFilter === "all" || session.grip === gripFilter));
-  const progressPoints = filteredSessions.flatMap((session) => progressPointsForSession(session, selectedMetric));
+  const selectedMetricKey = selectedMetric === "all" ? undefined : selectedMetric;
+  const progressPoints = filteredSessions.flatMap((session) => progressPointsForSession(session, selectedMetricKey));
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? filteredSessions[0];
   const traceOnlyCount = filteredSessions.length - new Set(progressPoints.map((point) => point.sessionId)).size;
 
@@ -241,7 +243,8 @@ export function TrackerApp() {
           </div>
           <div className="filters">
             <label>Metric
-              <select value={selectedMetric} onChange={(event) => setSelectedMetric(event.currentTarget.value as TrackerMetricKey)}>
+              <select value={selectedMetric} onChange={(event) => setSelectedMetric(event.currentTarget.value as SelectedMetric)}>
+                <option value="all">All chartable</option>
                 {metricOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
               </select>
             </label>
@@ -260,8 +263,8 @@ export function TrackerApp() {
             </label>
           </div>
         </div>
-        <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetric} />
-        {traceOnlyCount > 0 && <p className="notice">{traceOnlyCount} saved session{traceOnlyCount === 1 ? "" : "s"} are trace-only for this metric.</p>}
+        <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} />
+        {traceOnlyCount > 0 && <p className="notice">{traceOnlyCount} saved session{traceOnlyCount === 1 ? "" : "s"} are trace-only for {selectedMetric === "all" ? "these metrics" : "this metric"}.</p>}
       </section>
 
       <section className="tracker-grid" aria-label="Saved sessions">

@@ -22,4 +22,14 @@ describe("TrackerProgressChart", () => {
 
     expect(markup).toContain("No progress metrics are available");
   });
+
+  it("plots repeater average and peak force together when no metric filter is selected", () => {
+    const markup = renderToStaticMarkup(<TrackerProgressChart points={[
+      { sessionId: "1", mode: "repeater", grip: "half crimp", testedAt: "2026-08-20T10:00:00.000Z", metricKey: "repeaterAverageForceN", label: "Repeater average force", value: 120, unit: "N" },
+      { sessionId: "1", mode: "repeater", grip: "half crimp", testedAt: "2026-08-20T10:00:00.000Z", metricKey: "peakForceN", label: "Peak force", value: 150, unit: "N" },
+    ]} />);
+
+    expect(markup).toContain("Repeater - half crimp - Repeater average force");
+    expect(markup).toContain("Repeater - half crimp - Peak force");
+  });
 });
