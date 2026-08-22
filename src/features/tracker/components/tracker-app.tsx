@@ -3,10 +3,12 @@
 import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { TrackerProgressChart } from "@/components/charts/tracker-progress-chart";
 import { TrackerTraceChart } from "@/components/charts/tracker-trace-chart";
+import { formatCompactDate, formatMetricValue, formatProgressMetricLabel } from "@/components/charts/chart-utils";
 import { extractCsvFiles, type ExtractedCsvFile } from "@/features/tracker/import/extract-files";
 import { detectTindeqCsv } from "@/features/tracker/parsers/detect";
+import { augmentStoredRepeaterMetrics } from "@/features/tracker/parsers/repeater";
 import { parseCsvRows } from "@/features/tracker/parsers/tindeq-shared";
-import { buildTrackerSession, progressPointsForSession, validateImportContext, type ParsedTrackerCsv, type TrackerMetricKey, type TrackerMode, type TrackerSession } from "@/features/tracker/types";
+import { buildTrackerSession, progressPointsForSession, validateImportContext, type ParsedTrackerCsv, type ProgressPoint, type TrackerMetricKey, type TrackerMode, type TrackerSession } from "@/features/tracker/types";
 import { createTrackerStore, type TrackerStore } from "@/features/tracker/storage/local-store";
 
 type DraftImport = Readonly<{
@@ -30,10 +32,11 @@ const metricOptions: { key: TrackerMetricKey; label: string; mode?: TrackerMode 
   { key: "peakForceN", label: "Peak force" },
 ];
 
-const gripPresets = ["20mm edge", "15mm edge", "half crimp", "open hand", "pinch", "jug"];
+const gripPresets = ["20mm edge", "15mm edge", "half crimp", "rehab half crimp", "open hand", "pinch", "jug"];
 
 export function TrackerApp() {
   const storeRef = useRef<TrackerStore | null>(null);
+  const refreshGenerationRef = useRef(0);
   const [sessions, setSessions] = useState<TrackerSession[]>([]);
   const [drafts, setDrafts] = useState<DraftImport[]>([]);
   const [selectedMetric, setSelectedMetric] = useState<SelectedMetric>("all");
@@ -41,6 +44,7 @@ export function TrackerApp() {
   const [gripFilter, setGripFilter] = useState("all");
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
   const [status, setStatus] = useState("Loading local tracker data...");
+  const [reimportNoticeCount, setReimportNoticeCount] = useState(0);
 
   useEffect(() => {
     const store = createTrackerStore();
@@ -50,7 +54,21 @@ export function TrackerApp() {
 
   async function refreshSessions(store = storeRef.current) {
     if (!store) return;
-    setSessions(await store.list());
+    const generation = ++refreshGenerationRef.current;
+    const storedSessions = await store.list();
+    const normalized = storedSessions.map((session) => augmentStoredRepeaterMetrics(session));
+    if (generation !== refreshGenerationRef.current) return;
+
+    await Promise.all(normalized.filter((result) => result.changed).map(async (result) => {
+      if (generation !== refreshGenerationRef.current) return;
+      const current = await store.get(result.session.id);
+      if (!current || generation !== refreshGenerationRef.current) return;
+      await store.save(result.session);
+    }));
+    if (generation !== refreshGenerationRef.current) return;
+
+    setReimportNoticeCount(normalized.filter((result) => result.needsReimport).length);
+    setSessions(normalized.map((result) => result.session));
   }
 
   async function handleFiles(files: FileList | null) {
@@ -137,6 +155,7 @@ export function TrackerApp() {
   async function deleteSession(id: string) {
     const store = storeRef.current;
     if (!store) return;
+    refreshGenerationRef.current += 1;
     await store.delete(id);
     await refreshSessions(store);
     if (selectedSessionId === id) setSelectedSessionId(undefined);
@@ -147,18 +166,25 @@ export function TrackerApp() {
     if (!window.confirm("Delete all local Tindeq tracker data from this browser?")) return;
     const store = storeRef.current;
     if (!store) return;
+    refreshGenerationRef.current += 1;
     await store.clear();
     await refreshSessions(store);
     setSelectedSessionId(undefined);
     setStatus("Local tracker data cleared.");
   }
 
-  const grips = useMemo(() => ["all", ...Array.from(new Set(sessions.map((session) => session.grip))).sort()], [sessions]);
+  const grips = useMemo(() => ["all", ...Array.from(new Set([...gripPresets, ...sessions.map((session) => session.grip)])).sort()], [sessions]);
   const filteredSessions = sessions.filter((session) =>
     (modeFilter === "all" || session.mode === modeFilter) &&
     (gripFilter === "all" || session.grip === gripFilter));
-  const selectedMetricKey = selectedMetric === "all" ? undefined : selectedMetric;
+  const metricAvailability = useMemo(() => summarizeMetricAvailability(filteredSessions), [filteredSessions]);
+  const availableMetricOptions = metricOptions.filter((option) => metricAvailability.get(option.key)?.count);
+  const unavailableMetricOptions = metricOptions.filter((option) => !metricAvailability.get(option.key)?.count);
+
+  const effectiveSelectedMetric = selectedMetric !== "all" && !metricAvailability.get(selectedMetric)?.count ? "all" : selectedMetric;
+  const selectedMetricKey = effectiveSelectedMetric === "all" ? undefined : effectiveSelectedMetric;
   const progressPoints = filteredSessions.flatMap((session) => progressPointsForSession(session, selectedMetricKey));
+  const progressSummary = summarizeProgressPoints(progressPoints);
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? filteredSessions[0];
   const traceOnlyCount = filteredSessions.length - new Set(progressPoints.map((point) => point.sessionId)).size;
 
@@ -207,7 +233,10 @@ export function TrackerApp() {
               {draft.parsed && !draft.saved && (
                 <div className="draft-fields">
                   <label>Grip
-                    <input list="grip-presets" value={draft.grip} onChange={(event) => updateDraft(draft.id, { grip: event.currentTarget.value })} placeholder="20mm edge" />
+                    <select value={draft.grip} onChange={(event) => updateDraft(draft.id, { grip: event.currentTarget.value })}>
+                      <option value="">Choose grip</option>
+                      {gripPresets.map((grip) => <option key={grip} value={grip}>{grip}</option>)}
+                    </select>
                   </label>
                   <label>Date
                     <input type="datetime-local" value={draft.testedAt} onChange={(event) => updateDraft(draft.id, { testedAt: event.currentTarget.value })} />
@@ -229,9 +258,6 @@ export function TrackerApp() {
               {draft.saved && <p className="notice" role="status">Saved locally.</p>}
             </article>
           ))}
-          <datalist id="grip-presets">
-            {gripPresets.map((grip) => <option key={grip} value={grip} />)}
-          </datalist>
         </section>
       )}
 
@@ -243,9 +269,9 @@ export function TrackerApp() {
           </div>
           <div className="filters">
             <label>Metric
-              <select value={selectedMetric} onChange={(event) => setSelectedMetric(event.currentTarget.value as SelectedMetric)}>
+              <select value={effectiveSelectedMetric} onChange={(event) => setSelectedMetric(event.currentTarget.value as SelectedMetric)}>
                 <option value="all">All chartable</option>
-                {metricOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+                {availableMetricOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
               </select>
             </label>
             <label>Mode
@@ -263,8 +289,15 @@ export function TrackerApp() {
             </label>
           </div>
         </div>
+        {unavailableMetricOptions.length > 0 && (
+          <p className="metric-help">
+            Not charting yet: {unavailableMetricOptions.map((option) => `${option.label} (${metricAvailability.get(option.key)?.reason ?? "no matching sessions"})`).join("; ")}.
+          </p>
+        )}
+        {progressSummary && <p className="progress-summary">{progressSummary}</p>}
         <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} />
-        {traceOnlyCount > 0 && <p className="notice">{traceOnlyCount} saved session{traceOnlyCount === 1 ? "" : "s"} are trace-only for {selectedMetric === "all" ? "these metrics" : "this metric"}.</p>}
+        {traceOnlyCount > 0 && <p className="notice">{traceOnlyCount} saved session{traceOnlyCount === 1 ? "" : "s"} are trace-only for {effectiveSelectedMetric === "all" ? "these metrics" : "this metric"}.</p>}
+        {reimportNoticeCount > 0 && <p className="notice">{reimportNoticeCount} saved Repeater session{reimportNoticeCount === 1 ? "" : "s"} need re-import before estimated average or peak force can be derived.</p>}
       </section>
 
       <section className="tracker-grid" aria-label="Saved sessions">
@@ -292,7 +325,7 @@ export function TrackerApp() {
                 {selectedSession.metrics.map((metric) => (
                   <div key={metric.key}>
                     <dt>{metric.label}</dt>
-                    <dd>{metric.available ? `${metric.value.toFixed(2)} ${metric.unit}` : metric.reason}</dd>
+                    <dd>{metric.available ? formatMetricValue(metric) : metric.reason}</dd>
                   </div>
                 ))}
               </dl>
@@ -398,16 +431,34 @@ function parseTindeqInfoCsv(source: string): DraftDefaults {
       metadata["pause btw. reps"] ? `${metadata["pause btw. reps"]}s rest` : undefined,
       metadata.mvc ? `MVC ${metadata.mvc}` : undefined,
       metadata["Work Level (% of mvc)"] ? `work ${metadata["Work Level (% of mvc)"]}% MVC` : undefined,
+      metadata.tag ? `Tindeq tag: ${metadata.tag}` : undefined,
     ].filter(Boolean).join(" - ");
 
     return {
-      grip: metadata.tag,
+      grip: gripFromSourceTag(metadata.tag),
       testedAt: parseTindeqInfoDate(metadata.date),
       notes,
     };
   } catch {
     return {};
   }
+}
+
+function gripFromSourceTag(value?: string) {
+  const sourceTag = value?.trim();
+  if (!sourceTag) return undefined;
+  const normalizedSource = normalizeGripTag(sourceTag);
+  return gripPresets.find((grip) => normalizeGripTag(grip) === normalizedSource) ??
+    gripPresets.find((grip) => normalizedSource.startsWith(normalizeGripTag(grip))) ??
+    undefined;
+}
+
+function normalizeGripTag(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\s+\d+(?:\.\d+)?\s*kg\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function parseTindeqInfoDate(value?: string) {
@@ -450,4 +501,29 @@ function availableMetricText(parsed?: ParsedTrackerCsv) {
   const available = parsed.metrics.filter((metric) => metric.available);
   if (available.length === 0) return "trace inspection only";
   return available.map((metric) => metric.label).join(", ");
+}
+
+function summarizeMetricAvailability(sessions: readonly TrackerSession[]) {
+  const summary = new Map<TrackerMetricKey, { count: number; reason?: string }>();
+  for (const option of metricOptions) summary.set(option.key, { count: 0 });
+
+  for (const session of sessions) {
+    for (const metric of session.metrics) {
+      const current = summary.get(metric.key) ?? { count: 0 };
+      if (metric.available) {
+        summary.set(metric.key, { count: current.count + 1, reason: current.reason });
+      } else {
+        summary.set(metric.key, { ...current, reason: current.reason ?? metric.reason });
+      }
+    }
+  }
+
+  return summary;
+}
+
+function summarizeProgressPoints(points: readonly ProgressPoint[]) {
+  if (points.length === 0) return undefined;
+  const latest = [...points].sort((a, b) => Date.parse(b.testedAt) - Date.parse(a.testedAt))[0];
+  const seriesCount = new Set(points.map((point) => [point.mode, point.grip, point.hand ?? "any", point.metricKey].join(":"))).size;
+  return `${points.length} point${points.length === 1 ? "" : "s"} across ${seriesCount} series. Latest: ${formatProgressMetricLabel(latest)} ${formatMetricValue(latest)} on ${formatCompactDate(latest.testedAt)}.`;
 }

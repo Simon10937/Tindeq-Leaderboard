@@ -29,7 +29,17 @@ describe("TrackerProgressChart", () => {
       { sessionId: "1", mode: "repeater", grip: "half crimp", testedAt: "2026-08-20T10:00:00.000Z", metricKey: "peakForceN", label: "Peak force", value: 150, unit: "N" },
     ]} />);
 
-    expect(markup).toContain("Repeater - half crimp - Repeater average force");
+    expect(markup).toContain("Repeater - half crimp - Estimated avg repeater force");
     expect(markup).toContain("Repeater - half crimp - Peak force");
+  });
+
+  it("renders kg labels, compact dates, and axis titles", () => {
+    const markup = renderToStaticMarkup(<TrackerProgressChart points={points} />);
+
+    expect(markup).toContain("Force (kg)");
+    expect(markup).toContain("Date");
+    expect(markup).toContain("20/8");
+    expect(markup).toContain("10.2 kg");
+    expect(markup).not.toContain("100 N");
   });
 });

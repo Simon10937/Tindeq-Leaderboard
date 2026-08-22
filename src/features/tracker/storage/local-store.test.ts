@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryTrackerStore } from "./local-store";
+import { augmentStoredRepeaterMetrics } from "@/features/tracker/parsers/repeater";
 import type { TrackerSession } from "@/features/tracker/types";
 
 function session(id: string, testedAt: string): TrackerSession {
@@ -38,5 +39,55 @@ describe("createMemoryTrackerStore", () => {
     await store.save(session("two", "2026-08-22T11:00:00.000Z"));
     await store.clear();
     await expect(store.list()).resolves.toEqual([]);
+  });
+});
+
+describe("augmentStoredRepeaterMetrics", () => {
+  it("adds missing derived repeater metrics from stored traces", () => {
+    const oldSession: TrackerSession = {
+      ...session("repeater-old", "2026-08-22T10:00:00.000Z"),
+      mode: "repeater",
+      parserVersion: "tindeq-repeater-csv/v1",
+      sourceSummary: "Repeater",
+      vendorMetadata: { Avg: "0.0", Peak: "0.0" },
+      metrics: [
+        { key: "repeaterAverageForceN", label: "Repeater average force", available: false, reason: "Tindeq exported Avg as zero or blank" },
+      ],
+      trace: { elapsedUs: [0, 1_000_000, 2_000_000], forceN: [0, 10, 20] },
+    };
+
+    const augmented = augmentStoredRepeaterMetrics(oldSession);
+
+    expect(augmented.changed).toBe(true);
+    expect(augmented.session.metrics.find((metric) => metric.key === "repeaterAverageForceN")).toMatchObject({
+      available: true,
+      unit: "N",
+      value: 15,
+    });
+    expect(augmented.session.metrics.find((metric) => metric.key === "peakForceN")).toMatchObject({
+      available: true,
+      unit: "N",
+      value: 20,
+    });
+  });
+
+  it("asks for re-import when stored repeater traces cannot derive metrics", () => {
+    const oldSession: TrackerSession = {
+      ...session("repeater-empty", "2026-08-22T10:00:00.000Z"),
+      mode: "repeater",
+      parserVersion: "tindeq-repeater-csv/v1",
+      sourceSummary: "Repeater",
+      vendorMetadata: { Avg: "0.0", Peak: "0.0" },
+      metrics: [
+        { key: "repeaterAverageForceN", label: "Repeater average force", available: false, reason: "Tindeq exported Avg as zero or blank" },
+      ],
+      trace: { elapsedUs: [], forceN: [] },
+    };
+
+    const augmented = augmentStoredRepeaterMetrics(oldSession);
+
+    expect(augmented.changed).toBe(false);
+    expect(augmented.needsReimport).toBe(true);
+    expect(augmented.session).toBe(oldSession);
   });
 });

@@ -286,6 +286,17 @@ textarea {
   padding: 10px 12px;
 }
 
+.metric-help {
+  font-size: 0.9rem;
+  margin-bottom: 0;
+}
+
+.progress-summary {
+  color: var(--ink) !important;
+  font-weight: 800;
+  margin-bottom: 0;
+}
+
 .metric-list {
   display: grid;
   gap: 8px;
@@ -343,6 +354,17 @@ textarea {
   fill: var(--panel);
   stroke: var(--accent-strong);
   stroke-width: 2;
+}
+
+.axis-label {
+  fill: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.axis-tick {
+  fill: var(--muted);
+  font-size: 0.72rem;
 }
 
 .chart-key {
@@ -410,6 +432,11 @@ textarea {
 .trace-table-wrap {
   max-height: 260px;
   overflow: auto;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  width: 100%;
 }
 
 :focus-visible {
