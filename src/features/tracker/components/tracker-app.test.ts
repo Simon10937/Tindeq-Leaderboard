@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createDraftsFromCsvFiles } from "./tracker-app";
+import { countSessionsThisWeek, createDraftsFromCsvFiles, normalizeWeeklyTarget } from "./tracker-app";
+import type { TrackerSession } from "@/features/tracker/types";
 
 describe("createDraftsFromCsvFiles", () => {
   it("uses Tindeq info.csv as metadata for the data CSV", () => {
@@ -41,5 +42,41 @@ describe("createDraftsFromCsvFiles", () => {
 
     expect(drafts[0].grip).toBe("");
     expect(drafts[0].notes).toContain("Tindeq tag: mystery grip 3kg");
+  });
+});
+
+describe("countSessionsThisWeek", () => {
+  it("counts saved sessions in the current Monday-based week", () => {
+    const baseSession: TrackerSession = {
+      id: "base",
+      mode: "repeater",
+      parserVersion: "test",
+      filename: "test.csv",
+      sourceSummary: "Repeater",
+      vendorMetadata: {},
+      metrics: [],
+      trace: { elapsedUs: [], forceN: [] },
+      warnings: [],
+      grip: "20mm edge",
+      testedAt: "2026-08-17T10:00",
+      createdAt: "2026-08-17T10:00",
+    };
+
+    expect(countSessionsThisWeek([
+      baseSession,
+      { ...baseSession, id: "same-week", testedAt: "2026-08-23T18:00" },
+      { ...baseSession, id: "previous-week", testedAt: "2026-08-16T18:00" },
+      { ...baseSession, id: "next-week", testedAt: "2026-08-24T08:00" },
+    ], new Date("2026-08-22T12:00:00"))).toBe(2);
+  });
+});
+
+describe("normalizeWeeklyTarget", () => {
+  it("keeps weekly targets within the supported one to fourteen session range", () => {
+    expect(normalizeWeeklyTarget(0)).toBe(1);
+    expect(normalizeWeeklyTarget(-2)).toBe(1);
+    expect(normalizeWeeklyTarget(3.6)).toBe(4);
+    expect(normalizeWeeklyTarget(999)).toBe(14);
+    expect(normalizeWeeklyTarget(Number.NaN)).toBeUndefined();
   });
 });

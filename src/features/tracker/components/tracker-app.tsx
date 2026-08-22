@@ -25,6 +25,7 @@ type DraftImport = Readonly<{
 
 type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "notes">>;
 type SelectedMetric = "all" | TrackerMetricKey;
+type AvailableMetric = Extract<TrackerSession["metrics"][number], { available: true }>;
 
 const metricOptions: { key: TrackerMetricKey; label: string; mode?: TrackerMode }[] = [
   { key: "criticalForceN", label: "Critical force", mode: "endurance" },
@@ -33,6 +34,7 @@ const metricOptions: { key: TrackerMetricKey; label: string; mode?: TrackerMode 
 ];
 
 const gripPresets = ["20mm edge", "15mm edge", "half crimp", "rehab half crimp", "open hand", "pinch", "jug"];
+const weeklyTargetStorageKey = "tindeq-tracker-weekly-target";
 
 export function TrackerApp() {
   const storeRef = useRef<TrackerStore | null>(null);
@@ -45,11 +47,21 @@ export function TrackerApp() {
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
   const [status, setStatus] = useState("Loading local tracker data...");
   const [reimportNoticeCount, setReimportNoticeCount] = useState(0);
+  const [weeklyTarget, setWeeklyTarget] = useState(3);
 
   useEffect(() => {
     const store = createTrackerStore();
     storeRef.current = store;
     void refreshSessions(store).then(() => setStatus("Local tracker ready."));
+  }, []);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      const savedTarget = readWeeklyTarget();
+      if (savedTarget) setWeeklyTarget(savedTarget);
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   async function refreshSessions(store = storeRef.current) {
@@ -173,6 +185,12 @@ export function TrackerApp() {
     setStatus("Local tracker data cleared.");
   }
 
+  function updateWeeklyTarget(value: number) {
+    const nextTarget = normalizeWeeklyTarget(value) ?? 3;
+    setWeeklyTarget(nextTarget);
+    persistWeeklyTarget(nextTarget);
+  }
+
   const grips = useMemo(() => ["all", ...Array.from(new Set([...gripPresets, ...sessions.map((session) => session.grip)])).sort()], [sessions]);
   const filteredSessions = sessions.filter((session) =>
     (modeFilter === "all" || session.mode === modeFilter) &&
@@ -187,25 +205,98 @@ export function TrackerApp() {
   const progressSummary = summarizeProgressPoints(progressPoints);
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? filteredSessions[0];
   const traceOnlyCount = filteredSessions.length - new Set(progressPoints.map((point) => point.sessionId)).size;
+  const latestSession = sessions[0];
+  const latestAverage = latestSession ? metricValue(latestSession, "repeaterAverageForceN") ?? metricValue(latestSession, "criticalForceN") : undefined;
+  const latestPeak = latestSession ? metricValue(latestSession, "peakForceN") : undefined;
+  const latestFilteredSession = filteredSessions[0];
+  const latestFilteredAverage = latestFilteredSession ? metricValue(latestFilteredSession, "repeaterAverageForceN") ?? metricValue(latestFilteredSession, "criticalForceN") : undefined;
+  const personalBest = bestProgressPoint(progressPoints);
+  const weeklyCount = countSessionsThisWeek(sessions);
+  const weeklyPercent = Math.min(100, Math.round((weeklyCount / weeklyTarget) * 100));
 
   return (
-    <main className="tracker-shell">
-      <header className="tracker-header">
-        <div>
-          <p className="eyebrow">Personal Tindeq tracker</p>
-          <h1>Track grip progress from CSVs.</h1>
-          <p className="lede">Import Endurance and Repeater exports, tag the grip, and keep the progress graph local to this browser.</p>
-        </div>
-        <button className="button button-quiet" type="button" onClick={resetAll}>Reset</button>
+    <>
+      <header className="app-bar">
+        <a className="brand-mark" href="#progress" aria-label="Tracker progress">
+          <span aria-hidden="true">T</span>
+          <strong>Tracker</strong>
+        </a>
+        <nav className="top-nav" aria-label="Primary">
+          <a href="#progress">Progress</a>
+          <a href="#import">Import</a>
+          <a href="#history">History</a>
+        </nav>
+        <button className="icon-button" type="button" onClick={resetAll}>Reset</button>
       </header>
 
-      <section className="tracker-panel import-panel" aria-labelledby="import-title">
+      <main className="tracker-shell">
+        <section className="tracker-welcome" aria-labelledby="tracker-title">
+          <div>
+            <p className="eyebrow">Personal Tindeq tracker</p>
+            <h1 id="tracker-title">Track grip progress.</h1>
+            <p className="lede">Upload Tindeq exports, tag the grip, and keep the important chart local to this browser.</p>
+          </div>
+          <div className="session-counter" aria-label={`${sessions.length} saved sessions`}>
+            <span>{sessions.length}</span>
+            <small>saved session{sessions.length === 1 ? "" : "s"}</small>
+          </div>
+        </section>
+
+        <section className="tracker-panel weekly-target" aria-labelledby="weekly-target-title">
+          <div>
+            <p className="eyebrow">Weekly target</p>
+            <h2 id="weekly-target-title">{weeklyCount} / {weeklyTarget} sessions</h2>
+          </div>
+          <div className="target-meter" aria-label={`Weekly target ${weeklyCount} of ${weeklyTarget} sessions`}>
+            <div><span style={{ width: `${weeklyPercent}%` }} /></div>
+            <small>{weeklyCount >= weeklyTarget ? "Target met" : `${Math.max(weeklyTarget - weeklyCount, 0)} to go this week`}</small>
+          </div>
+          <label className="target-control">Target
+            <input type="number" min="1" max="14" value={weeklyTarget} onChange={(event) => updateWeeklyTarget(Number(event.currentTarget.value))} />
+          </label>
+        </section>
+
+        <section className="quick-actions" aria-label="Quick actions">
+          <a className="action-tile action-primary" href="#import">
+            <span aria-hidden="true">+</span>
+            <strong>Import new data</strong>
+          </a>
+          <a className="action-tile" href="#progress">
+            <span aria-hidden="true">chart</span>
+            <strong>View progress</strong>
+          </a>
+          <a className="action-tile" href="#history">
+            <span aria-hidden="true">list</span>
+            <strong>Session history</strong>
+          </a>
+        </section>
+
+        <section className="tracker-panel latest-panel" aria-labelledby="latest-title">
+          <div className="section-heading">
+            <p className="eyebrow">Latest activity</p>
+            <h2 id="latest-title">{latestSession ? `${modeLabel(latestSession.mode)} ${formatCompactDate(latestSession.testedAt)}` : "No sessions yet"}</h2>
+            {latestSession && <p>{latestSession.grip}{latestSession.hand ? ` - ${latestSession.hand}` : ""}</p>}
+          </div>
+          <div className="stat-grid">
+            <div className="stat-card">
+              <span>{latestAverage ? formatProgressMetricLabel(latestAverage) : "Primary load"}</span>
+              <strong>{latestAverage ? formatMetricValue(latestAverage) : "--"}</strong>
+            </div>
+            <div className="stat-card">
+              <span>{latestPeak ? latestPeak.label : "Peak load"}</span>
+              <strong>{latestPeak ? formatMetricValue(latestPeak) : "--"}</strong>
+            </div>
+          </div>
+        </section>
+
+      <section className="tracker-panel import-panel" id="import" aria-labelledby="import-title">
         <div>
           <h2 id="import-title">Import</h2>
           <p>{status}</p>
         </div>
         <div className="import-actions">
           <label className="file-picker">
+            <span className="tile-icon" aria-hidden="true">upload</span>
             <span>Choose Tindeq ZIP or CSVs</span>
             <input type="file" accept=".csv,.zip,text/csv,application/zip" multiple onChange={(event) => void handleFiles(event.currentTarget.files)} />
           </label>
@@ -226,18 +317,30 @@ export function TrackerApp() {
         <section className="draft-list" aria-label="Pending imports">
           {drafts.map((draft) => (
             <article className="draft-card" key={draft.id}>
-              <div>
-                <h3>{draft.filename}</h3>
-                <p>{draft.error ?? `${modeLabel(draft.parsed?.mode)} - ${availableMetricText(draft.parsed)}`}</p>
+              <div className="draft-card-head">
+                <div>
+                  <span className="eyebrow">Detected</span>
+                  <h3>{draft.filename}</h3>
+                  <p>{draft.error ?? `${modeLabel(draft.parsed?.mode)} - ${availableMetricText(draft.parsed)}`}</p>
+                </div>
               </div>
               {draft.parsed && !draft.saved && (
                 <div className="draft-fields">
-                  <label>Grip
-                    <select value={draft.grip} onChange={(event) => updateDraft(draft.id, { grip: event.currentTarget.value })}>
-                      <option value="">Choose grip</option>
-                      {gripPresets.map((grip) => <option key={grip} value={grip}>{grip}</option>)}
-                    </select>
-                  </label>
+                  <fieldset className="chip-field">
+                    <legend>Assign grip type</legend>
+                    <div className="chip-list">
+                      {gripPresets.map((grip) => (
+                        <button
+                          className={draft.grip === grip ? "chip chip-selected" : "chip"}
+                          key={grip}
+                          type="button"
+                          onClick={() => updateDraft(draft.id, { grip })}
+                        >
+                          {grip}
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
                   <label>Date
                     <input type="datetime-local" value={draft.testedAt} onChange={(event) => updateDraft(draft.id, { testedAt: event.currentTarget.value })} />
                   </label>
@@ -249,7 +352,7 @@ export function TrackerApp() {
                       <option value="both">Both</option>
                     </select>
                   </label>
-                  <label>Notes
+                  <label className="draft-notes">Notes
                     <textarea value={draft.notes} onChange={(event) => updateDraft(draft.id, { notes: event.currentTarget.value })} />
                   </label>
                   <button className="button" type="button" onClick={() => void saveDraft(draft)}>Save local session</button>
@@ -261,7 +364,7 @@ export function TrackerApp() {
         </section>
       )}
 
-      <section className="tracker-panel" aria-labelledby="progress-title">
+      <section className="tracker-panel progress-panel" id="progress" aria-labelledby="progress-title">
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Progress</p>
@@ -295,21 +398,39 @@ export function TrackerApp() {
           </p>
         )}
         {progressSummary && <p className="progress-summary">{progressSummary}</p>}
+        <div className="stat-grid stat-grid-compact">
+          <div className="stat-card">
+            <span>Latest</span>
+            <strong>{latestFilteredAverage ? formatMetricValue(latestFilteredAverage) : "--"}</strong>
+            <small>{latestFilteredSession ? formatCompactDate(latestFilteredSession.testedAt) : "No matching data"}</small>
+          </div>
+          <div className="stat-card">
+            <span>Best plotted</span>
+            <strong>{personalBest ? formatMetricValue(personalBest) : "--"}</strong>
+            <small>{personalBest ? formatProgressMetricLabel(personalBest) : "No chart points"}</small>
+          </div>
+        </div>
         <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} />
         {traceOnlyCount > 0 && <p className="notice">{traceOnlyCount} saved session{traceOnlyCount === 1 ? "" : "s"} are trace-only for {effectiveSelectedMetric === "all" ? "these metrics" : "this metric"}.</p>}
         {reimportNoticeCount > 0 && <p className="notice">{reimportNoticeCount} saved Repeater session{reimportNoticeCount === 1 ? "" : "s"} need re-import before estimated average or peak force can be derived.</p>}
       </section>
 
-      <section className="tracker-grid" aria-label="Saved sessions">
-        <div className="tracker-panel">
-          <h2>Sessions</h2>
+      <section className="tracker-grid" id="history" aria-label="Saved sessions">
+        <div className="tracker-panel history-panel">
+          <div className="section-heading">
+            <p className="eyebrow">History</p>
+            <h2>Sessions</h2>
+          </div>
           {filteredSessions.length === 0 ? <p>No saved sessions match these filters.</p> : (
             <ul className="session-list">
               {filteredSessions.map((session) => (
                 <li key={session.id}>
-                  <button type="button" onClick={() => setSelectedSessionId(session.id)} className={selectedSession?.id === session.id ? "selected-session" : ""}>
-                    <strong>{session.grip}</strong>
-                    <span>{modeLabel(session.mode)} - {new Date(session.testedAt).toLocaleDateString()}</span>
+                  <button type="button" onClick={() => setSelectedSessionId(session.id)} className={selectedSession?.id === session.id ? "session-select selected-session" : "session-select"}>
+                    <span className="session-date">{formatCompactDate(session.testedAt)}</span>
+                    <span>
+                      <strong>{session.grip}</strong>
+                      <small>{modeLabel(session.mode)} - {sessionMetricLine(session)}</small>
+                    </span>
                   </button>
                   <button className="text-button" type="button" onClick={() => void deleteSession(session.id)}>Delete</button>
                 </li>
@@ -317,8 +438,11 @@ export function TrackerApp() {
             </ul>
           )}
         </div>
-        <div className="tracker-panel">
-          <h2>CSV Detail</h2>
+        <div className="tracker-panel detail-panel">
+          <div className="section-heading">
+            <p className="eyebrow">Session detail</p>
+            <h2>CSV Detail</h2>
+          </div>
           {selectedSession ? (
             <>
               <dl className="metric-list">
@@ -335,6 +459,13 @@ export function TrackerApp() {
         </div>
       </section>
     </main>
+
+      <nav className="bottom-nav" aria-label="Mobile primary">
+        <a href="#progress"><span aria-hidden="true">chart</span>Progress</a>
+        <a href="#import"><span aria-hidden="true">+</span>Import</a>
+        <a href="#history"><span aria-hidden="true">list</span>History</a>
+      </nav>
+    </>
   );
 
   function updateDraft(id: string, patch: Partial<DraftImport>) {
@@ -501,6 +632,65 @@ function availableMetricText(parsed?: ParsedTrackerCsv) {
   const available = parsed.metrics.filter((metric) => metric.available);
   if (available.length === 0) return "trace inspection only";
   return available.map((metric) => metric.label).join(", ");
+}
+
+function metricValue(session: TrackerSession, key: TrackerMetricKey): AvailableMetric | undefined {
+  return session.metrics.find((metric): metric is AvailableMetric => metric.key === key && metric.available);
+}
+
+function sessionMetricLine(session: TrackerSession) {
+  const average = metricValue(session, "repeaterAverageForceN") ?? metricValue(session, "criticalForceN");
+  const peak = metricValue(session, "peakForceN");
+  if (average && peak) return `${formatMetricValue(average)} avg / ${formatMetricValue(peak)} peak`;
+  if (average) return `${formatMetricValue(average)} ${formatProgressMetricLabel(average).toLowerCase()}`;
+  if (peak) return `${formatMetricValue(peak)} peak`;
+  return "trace only";
+}
+
+function bestProgressPoint(points: readonly ProgressPoint[]) {
+  return points.reduce<ProgressPoint | undefined>((best, point) => {
+    if (!best || point.value > best.value) return point;
+    return best;
+  }, undefined);
+}
+
+function readWeeklyTarget() {
+  try {
+    return normalizeWeeklyTarget(Number(window.localStorage.getItem(weeklyTargetStorageKey)));
+  } catch {
+    return undefined;
+  }
+}
+
+export function normalizeWeeklyTarget(value: number) {
+  if (!Number.isFinite(value)) return undefined;
+  return Math.max(1, Math.min(14, Math.round(value)));
+}
+
+function persistWeeklyTarget(value: number) {
+  try {
+    window.localStorage.setItem(weeklyTargetStorageKey, String(value));
+  } catch {
+    // The target still updates for this session when browser storage is blocked.
+  }
+}
+
+export function countSessionsThisWeek(sessions: readonly TrackerSession[], now = new Date()) {
+  const weekStart = startOfLocalWeek(now);
+  const nextWeekStart = new Date(weekStart);
+  nextWeekStart.setDate(nextWeekStart.getDate() + 7);
+  return sessions.filter((session) => {
+    const testedAt = new Date(session.testedAt);
+    return testedAt >= weekStart && testedAt < nextWeekStart;
+  }).length;
+}
+
+function startOfLocalWeek(value: Date) {
+  const start = new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  const day = start.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  start.setDate(start.getDate() + mondayOffset);
+  return start;
 }
 
 function summarizeMetricAvailability(sessions: readonly TrackerSession[]) {
