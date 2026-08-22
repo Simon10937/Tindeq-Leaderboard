@@ -107,13 +107,22 @@ p {
   min-width: min(420px, 100%);
 }
 
-.paste-box {
+.paste-target {
+  align-items: start;
+  background: #fff;
+  border: 1px dashed var(--accent-strong);
+  border-radius: 8px;
+  color: var(--ink);
   display: grid;
-  gap: 8px;
+  gap: 5px;
+  min-height: 112px;
+  padding: 14px;
 }
 
-.paste-box textarea {
-  min-height: 128px;
+.paste-target span {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.35;
 }
 
 .import-panel p,

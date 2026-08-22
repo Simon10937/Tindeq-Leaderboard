@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-test("public home renders the product promise", async ({ page }) => {
+test("home renders the personal tracker", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /finger strength/i })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Create an account" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /track grip progress from csvs/i })).toBeVisible();
+  await expect(page.getByText("Choose Tindeq CSVs")).toBeVisible();
+  await expect(page.getByLabel(/paste tindeq csv files/i)).toBeVisible();
 });

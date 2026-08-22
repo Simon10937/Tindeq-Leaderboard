@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { TrackerProgressChart } from "@/components/charts/tracker-progress-chart";
 import { TrackerTraceChart } from "@/components/charts/tracker-trace-chart";
 import { detectTindeqCsv } from "@/features/tracker/parsers/detect";
@@ -35,7 +35,6 @@ export function TrackerApp() {
   const [modeFilter, setModeFilter] = useState<"all" | TrackerMode>("all");
   const [gripFilter, setGripFilter] = useState("all");
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
-  const [pastedCsv, setPastedCsv] = useState("");
   const [status, setStatus] = useState("Loading local tracker data...");
 
   useEffect(() => {
@@ -51,23 +50,29 @@ export function TrackerApp() {
 
   async function handleFiles(files: FileList | null) {
     if (!files) return;
-    const nextDrafts = await Promise.all(Array.from(files).map(async (file) => {
-      return createDraftFromCsv(await file.text(), file.name, `${file.lastModified}-${file.size}`);
-    }));
-    setDrafts((current) => [...nextDrafts, ...current]);
-    setStatus(`${nextDrafts.length} file${nextDrafts.length === 1 ? "" : "s"} ready to review.`);
+    await addFileDrafts(Array.from(files), "file");
   }
 
-  function handlePasteImport() {
-    if (!pastedCsv.trim()) {
-      setStatus("Paste a Tindeq CSV export first.");
+  async function handlePastedFiles(event: ClipboardEvent<HTMLDivElement>) {
+    const files = filesFromClipboard(event.clipboardData);
+    if (files.length === 0) {
+      setStatus("No pasted files found. Copy the Tindeq export files, then paste them here.");
       return;
     }
 
-    const draft = createDraftFromCsv(pastedCsv, `pasted-tindeq-${new Date().toISOString().slice(0, 19)}.csv`, `paste-${Date.now()}`);
-    setDrafts((current) => [draft, ...current]);
-    setPastedCsv("");
-    setStatus(draft.error ? "Pasted CSV could not be parsed." : "Pasted CSV ready to review.");
+    event.preventDefault();
+    await addFileDrafts(files, "pasted");
+  }
+
+  async function addFileDrafts(files: readonly File[], source: "file" | "pasted") {
+    const now = Date.now();
+    const nextDrafts = await Promise.all(files.map(async (file, index) => {
+      const filename = file.name.trim() || `pasted-tindeq-${index + 1}.csv`;
+      return createDraftFromCsv(await file.text(), filename, `${source}-${index}-${file.lastModified || now}-${file.size}`);
+    }));
+    setDrafts((current) => [...nextDrafts, ...current]);
+    const label = source === "pasted" ? "pasted file" : "file";
+    setStatus(`${nextDrafts.length} ${label}${nextDrafts.length === 1 ? "" : "s"} ready to review.`);
   }
 
   async function saveDraft(draft: DraftImport) {
@@ -138,15 +143,15 @@ export function TrackerApp() {
             <span>Choose Tindeq CSVs</span>
             <input type="file" accept=".csv,text/csv" multiple onChange={(event) => void handleFiles(event.currentTarget.files)} />
           </label>
-          <div className="paste-box">
-            <label>Paste CSV output
-              <textarea
-                value={pastedCsv}
-                onChange={(event) => setPastedCsv(event.currentTarget.value)}
-                placeholder={"critical force,...\ntime,weight"}
-              />
-            </label>
-            <button className="button button-quiet" type="button" onClick={handlePasteImport}>Add pasted CSV</button>
+          <div
+            className="paste-target"
+            onPaste={(event) => void handlePastedFiles(event)}
+            role="button"
+            tabIndex={0}
+            aria-label="Paste Tindeq CSV files"
+          >
+            <strong>Paste copied CSV files</strong>
+            <span>Accepts multiple Tindeq export files at once.</span>
           </div>
         </div>
       </section>
@@ -261,6 +266,16 @@ export function TrackerApp() {
   function updateDraft(id: string, patch: Partial<DraftImport>) {
     setDrafts((current) => current.map((draft) => draft.id === id ? { ...draft, ...patch } : draft));
   }
+}
+
+function filesFromClipboard(clipboardData: DataTransfer): File[] {
+  const files = Array.from(clipboardData.files);
+  if (files.length > 0) return files;
+
+  return Array.from(clipboardData.items)
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
 }
 
 function createDraftFromCsv(source: string, filename: string, idSuffix: string): DraftImport {
