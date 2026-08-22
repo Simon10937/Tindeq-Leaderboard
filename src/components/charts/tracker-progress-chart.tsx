@@ -1,0 +1,85 @@
+import type { ProgressPoint, TrackerMetricKey, TrackerMode } from "@/features/tracker/types";
+import { CHART_DASHES as DASHES, CHART_HEIGHT as HEIGHT, CHART_PADDING as PAD, CHART_WIDTH as WIDTH, dashLabel, formatDate, formatScore, scale } from "./chart-utils";
+
+type Props = Readonly<{
+  points: readonly ProgressPoint[];
+  selectedMetric?: TrackerMetricKey;
+}>;
+
+export function TrackerProgressChart({ points, selectedMetric }: Props) {
+  const visible = selectedMetric ? points.filter((point) => point.metricKey === selectedMetric) : points;
+  if (visible.length === 0) return <p role="status">No progress metrics are available for these filters yet.</p>;
+
+  const series = groupProgressSeries(visible);
+  const times = visible.map((point) => Date.parse(point.testedAt));
+  const values = visible.map((point) => point.value);
+  const timeMin = Math.min(...times);
+  const timeMax = Math.max(...times);
+  const valueMin = Math.min(...values);
+  const valueMax = Math.max(...values);
+  const x = (time: number) => scale(time, timeMin, timeMax, PAD, WIDTH - PAD);
+  const y = (value: number) => scale(value, valueMin, valueMax, HEIGHT - PAD, PAD);
+
+  return (
+    <figure className="tracker-chart" aria-labelledby="progress-chart-title">
+      <figcaption id="progress-chart-title">Progress over time</figcaption>
+      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-describedby="progress-chart-description">
+        <desc id="progress-chart-description">Progress values over time. The same values are listed in the table after the chart.</desc>
+        <line x1={PAD} y1={HEIGHT - PAD} x2={WIDTH - PAD} y2={HEIGHT - PAD} stroke="currentColor" />
+        <line x1={PAD} y1={PAD} x2={PAD} y2={HEIGHT - PAD} stroke="currentColor" />
+        {series.map((item, index) => {
+          const ordered = [...item.points].sort((a, b) => Date.parse(a.testedAt) - Date.parse(b.testedAt));
+          const path = ordered.map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${x(Date.parse(point.testedAt))} ${y(point.value)}`).join(" ");
+          return (
+            <g key={item.key}>
+              <path d={path} fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray={DASHES[index % DASHES.length]} />
+              {ordered.map((point) => (
+                <circle key={`${point.sessionId}-${point.metricKey}`} cx={x(Date.parse(point.testedAt))} cy={y(point.value)} r="5">
+                  <title>{item.label}: {formatScore(point.value)} {point.unit} on {formatDate(point.testedAt)}</title>
+                </circle>
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+      <ul className="chart-key" aria-label="Progress chart series">
+        {series.map((item, index) => <li key={item.key}><strong>{item.label}</strong> - {dashLabel(index)}</li>)}
+      </ul>
+      <div className="table-scroll">
+        <table>
+          <caption>Progress data</caption>
+          <thead><tr><th scope="col">Date</th><th scope="col">Test</th><th scope="col">Grip</th><th scope="col">Metric</th><th scope="col">Value</th></tr></thead>
+          <tbody>
+            {visible.map((point) => (
+              <tr key={`${point.sessionId}-${point.metricKey}`}>
+                <td>{formatDate(point.testedAt)}</td>
+                <td>{modeLabel(point.mode)}</td>
+                <td>{point.hand ? `${point.grip} (${point.hand})` : point.grip}</td>
+                <td>{point.label}</td>
+                <td>{formatScore(point.value)} {point.unit}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </figure>
+  );
+}
+
+function groupProgressSeries(points: readonly ProgressPoint[]) {
+  const grouped = new Map<string, { key: string; label: string; points: ProgressPoint[] }>();
+  for (const point of points) {
+    const key = [point.mode, point.grip, point.hand ?? "any", point.metricKey].join(":");
+    const label = `${modeLabel(point.mode)} - ${point.grip}${point.hand ? ` - ${point.hand}` : ""} - ${point.label}`;
+    const item = grouped.get(key) ?? { key, label, points: [] };
+    item.points.push(point);
+    grouped.set(key, item);
+  }
+  return [...grouped.values()];
+}
+
+function modeLabel(mode: TrackerMode) {
+  if (mode === "endurance") return "Endurance";
+  if (mode === "repeater") return "Repeater";
+  return "Trace only";
+}
