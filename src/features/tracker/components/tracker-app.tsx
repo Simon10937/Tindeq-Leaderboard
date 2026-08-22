@@ -3,6 +3,7 @@
 import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { TrackerProgressChart } from "@/components/charts/tracker-progress-chart";
 import { TrackerTraceChart } from "@/components/charts/tracker-trace-chart";
+import { extractCsvFiles } from "@/features/tracker/import/extract-files";
 import { detectTindeqCsv } from "@/features/tracker/parsers/detect";
 import { buildTrackerSession, progressPointsForSession, validateImportContext, type ParsedTrackerCsv, type TrackerMetricKey, type TrackerMode, type TrackerSession } from "@/features/tracker/types";
 import { createTrackerStore, type TrackerStore } from "@/features/tracker/storage/local-store";
@@ -53,6 +54,26 @@ export function TrackerApp() {
     await addFileDrafts(Array.from(files), "file");
   }
 
+  async function handleClipboardImport() {
+    if (!navigator.clipboard?.read) {
+      setStatus("This browser does not expose clipboard files to buttons. Use Choose Tindeq CSVs instead.");
+      return;
+    }
+
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      const files = await filesFromClipboardItems(clipboardItems);
+      if (files.length === 0) {
+        setStatus("No files found on the clipboard. Copy the Tindeq export from the app, then tap Import from clipboard.");
+        return;
+      }
+
+      await addFileDrafts(files, "clipboard");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not read files from the clipboard.");
+    }
+  }
+
   async function handlePastedFiles(event: ClipboardEvent<HTMLDivElement>) {
     const files = filesFromClipboard(event.clipboardData);
     if (files.length === 0) {
@@ -64,15 +85,23 @@ export function TrackerApp() {
     await addFileDrafts(files, "pasted");
   }
 
-  async function addFileDrafts(files: readonly File[], source: "file" | "pasted") {
+  async function addFileDrafts(files: readonly File[], source: "file" | "pasted" | "clipboard") {
     const now = Date.now();
-    const nextDrafts = await Promise.all(files.map(async (file, index) => {
-      const filename = file.name.trim() || `pasted-tindeq-${index + 1}.csv`;
-      return createDraftFromCsv(await file.text(), filename, `${source}-${index}-${file.lastModified || now}-${file.size}`);
-    }));
-    setDrafts((current) => [...nextDrafts, ...current]);
-    const label = source === "pasted" ? "pasted file" : "file";
-    setStatus(`${nextDrafts.length} ${label}${nextDrafts.length === 1 ? "" : "s"} ready to review.`);
+    setStatus("Reading Tindeq export...");
+
+    try {
+      const csvFiles = await extractCsvFiles(files);
+      const nextDrafts = csvFiles.map((file, index) => {
+        const filename = file.filename.trim() || `${source}-tindeq-${index + 1}.csv`;
+        return createDraftFromCsv(file.source, filename, `${source}-${index}-${now}-${file.byteSize}`);
+      });
+
+      setDrafts((current) => [...nextDrafts, ...current]);
+      const label = source === "file" ? "file" : `${source} import`;
+      setStatus(`${nextDrafts.length} ${label}${nextDrafts.length === 1 ? "" : "s"} ready to review.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not read the Tindeq export.");
+    }
   }
 
   async function saveDraft(draft: DraftImport) {
@@ -141,7 +170,7 @@ export function TrackerApp() {
         <div className="import-actions">
           <label className="file-picker">
             <span>Choose Tindeq CSVs</span>
-            <input type="file" accept=".csv,text/csv" multiple onChange={(event) => void handleFiles(event.currentTarget.files)} />
+            <input type="file" accept=".csv,.zip,text/csv,application/zip" multiple onChange={(event) => void handleFiles(event.currentTarget.files)} />
           </label>
           <div
             className="paste-target"
@@ -150,8 +179,8 @@ export function TrackerApp() {
             tabIndex={0}
             aria-label="Paste Tindeq CSV files"
           >
-            <strong>Paste copied CSV files</strong>
-            <span>Accepts multiple Tindeq export files at once.</span>
+            <button className="button" type="button" onClick={() => void handleClipboardImport()}>Import from clipboard</button>
+            <span>Reads copied Tindeq CSV or ZIP exports. ZIPs can contain raw data plus summary CSVs.</span>
           </div>
         </div>
       </section>
@@ -276,6 +305,33 @@ function filesFromClipboard(clipboardData: DataTransfer): File[] {
     .filter((item) => item.kind === "file")
     .map((item) => item.getAsFile())
     .filter((file): file is File => file !== null);
+}
+
+async function filesFromClipboardItems(items: readonly ClipboardItem[]): Promise<File[]> {
+  const files = await Promise.all(items.flatMap((item) => item.types
+    .filter((type) => isClipboardFileType(type))
+    .map(async (type) => {
+      const blob = await item.getType(type);
+      return new File([blob], clipboardFilename(type), { type: blob.type || type, lastModified: Date.now() });
+    })));
+
+  return files;
+}
+
+function isClipboardFileType(type: string) {
+  return type === "text/csv" ||
+    type === "application/csv" ||
+    type === "application/zip" ||
+    type === "application/x-zip-compressed" ||
+    type === "application/octet-stream";
+}
+
+function clipboardFilename(type: string) {
+  if (type === "application/zip" || type === "application/x-zip-compressed" || type === "application/octet-stream") {
+    return "clipboard-tindeq-export.zip";
+  }
+
+  return "clipboard-tindeq-export.csv";
 }
 
 function createDraftFromCsv(source: string, filename: string, idSuffix: string): DraftImport {

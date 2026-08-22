@@ -4,5 +4,5 @@ test("home renders the personal tracker", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /track grip progress from csvs/i })).toBeVisible();
   await expect(page.getByText("Choose Tindeq CSVs")).toBeVisible();
-  await expect(page.getByLabel(/paste tindeq csv files/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: /import from clipboard/i })).toBeVisible();
 });

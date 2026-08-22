@@ -119,6 +119,10 @@ p {
   padding: 14px;
 }
 
+.paste-target .button {
+  width: 100%;
+}
+
 .paste-target span {
   color: var(--muted);
   font-size: 0.9rem;
