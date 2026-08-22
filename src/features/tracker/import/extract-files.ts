@@ -99,12 +99,13 @@ async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
     throw new Error("This browser cannot unpack compressed ZIP files. Use Choose Tindeq CSVs for now.");
   }
 
-  const stream = new Blob([arrayBufferPart(bytes)]).stream().pipeThrough(new Decompression("deflate-raw" as CompressionFormat));
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  }).pipeThrough(new Decompression("deflate-raw" as CompressionFormat));
   return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-function arrayBufferPart(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 function assertSignature(bytes: Uint8Array, offset: number, signature: number, label: string) {

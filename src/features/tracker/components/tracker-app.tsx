@@ -3,8 +3,9 @@
 import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { TrackerProgressChart } from "@/components/charts/tracker-progress-chart";
 import { TrackerTraceChart } from "@/components/charts/tracker-trace-chart";
-import { extractCsvFiles } from "@/features/tracker/import/extract-files";
+import { extractCsvFiles, type ExtractedCsvFile } from "@/features/tracker/import/extract-files";
 import { detectTindeqCsv } from "@/features/tracker/parsers/detect";
+import { parseCsvRows } from "@/features/tracker/parsers/tindeq-shared";
 import { buildTrackerSession, progressPointsForSession, validateImportContext, type ParsedTrackerCsv, type TrackerMetricKey, type TrackerMode, type TrackerSession } from "@/features/tracker/types";
 import { createTrackerStore, type TrackerStore } from "@/features/tracker/storage/local-store";
 
@@ -19,6 +20,8 @@ type DraftImport = Readonly<{
   notes: string;
   saved?: boolean;
 }>;
+
+type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "notes">>;
 
 const metricOptions: { key: TrackerMetricKey; label: string; mode?: TrackerMode }[] = [
   { key: "criticalForceN", label: "Critical force", mode: "endurance" },
@@ -91,10 +94,11 @@ export function TrackerApp() {
 
     try {
       const csvFiles = await extractCsvFiles(files);
-      const nextDrafts = csvFiles.map((file, index) => {
-        const filename = file.filename.trim() || `${source}-tindeq-${index + 1}.csv`;
-        return createDraftFromCsv(file.source, filename, `${source}-${index}-${now}-${file.byteSize}`);
-      });
+      const nextDrafts = createDraftsFromCsvFiles(csvFiles, source, now);
+      if (nextDrafts.length === 0) {
+        setStatus("No Tindeq data CSVs found. The ZIP may only contain metadata.");
+        return;
+      }
 
       setDrafts((current) => [...nextDrafts, ...current]);
       const label = source === "file" ? "file" : `${source} import`;
@@ -169,7 +173,7 @@ export function TrackerApp() {
         </div>
         <div className="import-actions">
           <label className="file-picker">
-            <span>Choose Tindeq CSVs</span>
+            <span>Choose Tindeq ZIP or CSVs</span>
             <input type="file" accept=".csv,.zip,text/csv,application/zip" multiple onChange={(event) => void handleFiles(event.currentTarget.files)} />
           </label>
           <div
@@ -180,7 +184,7 @@ export function TrackerApp() {
             aria-label="Paste Tindeq CSV files"
           >
             <button className="button" type="button" onClick={() => void handleClipboardImport()}>Import from clipboard</button>
-            <span>Reads copied Tindeq CSV or ZIP exports. ZIPs can contain raw data plus summary CSVs.</span>
+            <span>Clipboard import works only when the browser exposes copied files. The ZIP picker is the reliable mobile path.</span>
           </div>
         </div>
       </section>
@@ -334,18 +338,89 @@ function clipboardFilename(type: string) {
   return "clipboard-tindeq-export.csv";
 }
 
-function createDraftFromCsv(source: string, filename: string, idSuffix: string): DraftImport {
+export function createDraftsFromCsvFiles(csvFiles: readonly ExtractedCsvFile[], source: string, now: number) {
+  const metadataByBundle = new Map<string, DraftDefaults>();
+  for (const file of csvFiles) {
+    if (isInfoCsv(file.filename)) {
+      metadataByBundle.set(bundleKey(file.filename), parseTindeqInfoCsv(file.source));
+    }
+  }
+
+  return csvFiles
+    .filter((file) => !isInfoCsv(file.filename))
+    .map((file, index) => createDraftFromCsv(
+      file.source,
+      file.filename.trim() || `${source}-tindeq-${index + 1}.csv`,
+      `${source}-${index}-${now}-${file.byteSize}`,
+      metadataByBundle.get(bundleKey(file.filename)) ?? metadataByBundle.get("loose"),
+    ));
+}
+
+function isInfoCsv(filename: string) {
+  return leafName(filename).toLowerCase() === "info.csv";
+}
+
+function bundleKey(filename: string) {
+  const separator = filename.indexOf(" / ");
+  return separator === -1 ? "loose" : filename.slice(0, separator);
+}
+
+function leafName(filename: string) {
+  const slash = filename.lastIndexOf("/");
+  return slash === -1 ? filename.trim() : filename.slice(slash + 1).trim();
+}
+
+function parseTindeqInfoCsv(source: string): DraftDefaults {
+  try {
+    const rows = parseCsvRows(source.replace(/^\uFEFF/, ""));
+    const headers = rows[0] ?? [];
+    const values = rows[1] ?? [];
+    const metadata = Object.fromEntries(headers.map((header, index) => [header.trim(), values[index]?.trim() ?? ""]));
+    const notes = [
+      metadata.comment,
+      metadata.reps ? `${metadata.reps} reps` : undefined,
+      metadata["work dur."] ? `${metadata["work dur."]}s work` : undefined,
+      metadata["pause btw. reps"] ? `${metadata["pause btw. reps"]}s rest` : undefined,
+      metadata.mvc ? `MVC ${metadata.mvc}` : undefined,
+      metadata["Work Level (% of mvc)"] ? `work ${metadata["Work Level (% of mvc)"]}% MVC` : undefined,
+    ].filter(Boolean).join(" - ");
+
+    return {
+      grip: metadata.tag,
+      testedAt: parseTindeqInfoDate(metadata.date),
+      notes,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function parseTindeqInfoDate(value?: string) {
+  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (!match) return undefined;
+
+  const [, year, middle, last, hour, minute] = match;
+  const month = Number(middle) > 12 ? last : middle;
+  const day = Number(middle) > 12 ? middle : last;
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function createDraftFromCsv(source: string, filename: string, idSuffix: string, defaults: DraftDefaults = {}): DraftImport {
   const detection = detectTindeqCsv(source, filename);
   const base = {
     id: `${filename}-${idSuffix}`,
     filename,
-    grip: "",
-    testedAt: new Date().toISOString().slice(0, 16),
+    grip: defaults.grip ?? "",
+    testedAt: defaults.testedAt ?? new Date().toISOString().slice(0, 16),
     hand: "" as const,
-    notes: "",
+    notes: defaults.notes ?? "",
   };
   if (detection.status === "invalid") return { ...base, error: detection.error };
-  return { ...base, parsed: detection.parsed, notes: detection.parsed.warnings.join(" ") };
+  return {
+    ...base,
+    parsed: detection.parsed,
+    notes: [defaults.notes, ...detection.parsed.warnings].filter(Boolean).join(" "),
+  };
 }
 
 function modeLabel(mode?: TrackerMode) {
