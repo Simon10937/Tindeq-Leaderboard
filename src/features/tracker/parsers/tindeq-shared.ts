@@ -1,3 +1,5 @@
+import type { TrackerMetric } from "@/features/tracker/types";
+
 export const KGF_TO_NEWTONS = 9.80665;
 
 export type CsvRow = readonly string[];
@@ -98,4 +100,16 @@ export function parseTraceRows(rows: readonly CsvRow[], startIndex: number) {
 export function maxValue(values: readonly number[]) {
   if (values.length === 0) return undefined;
   return Math.max(...values);
+}
+
+export function mergeMetrics(existing: readonly TrackerMetric[], replacements: readonly TrackerMetric[]) {
+  const replacementKeys = new Set(replacements.map((metric) => metric.key));
+  return [
+    ...existing.filter((metric) => !replacementKeys.has(metric.key)),
+    ...replacements,
+  ];
+}
+
+export function validForceSamples(forceN: readonly number[]) {
+  return forceN.filter((value) => Number.isFinite(value) && value >= 0);
 }

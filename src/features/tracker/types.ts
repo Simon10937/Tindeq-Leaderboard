@@ -2,6 +2,7 @@ export type TrackerMode = "endurance" | "repeater" | "unsupported_trace";
 
 export type TrackerMetricKey =
   | "criticalForceN"
+  | "enduranceAverageForceN"
   | "repeaterAverageForceN"
   | "peakForceN";
 
@@ -32,6 +33,7 @@ export type ImportContext = Readonly<{
   testedAt: string;
   hand?: "left" | "right" | "both";
   notes?: string;
+  tags?: readonly string[];
 }>;
 
 export type ParsedTrackerCsv = Readonly<{
@@ -51,7 +53,23 @@ export type TrackerSession = ParsedTrackerCsv & Readonly<{
   testedAt: string;
   hand?: "left" | "right" | "both";
   notes?: string;
+  tags?: readonly string[];
   createdAt: string;
+  updatedAt?: string;
+  auditLog?: readonly TrackerSessionAuditEntry[];
+}>;
+
+export type TrackerSessionAuditEntry = Readonly<{
+  id: string;
+  type: "created" | "metadata_updated";
+  createdAt: string;
+  changes: readonly TrackerSessionAuditChange[];
+}>;
+
+export type TrackerSessionAuditChange = Readonly<{
+  field: "grip" | "testedAt" | "hand" | "notes" | "tags";
+  before?: string | readonly string[];
+  after?: string | readonly string[];
 }>;
 
 export type ProgressPoint = Readonly<{
@@ -94,6 +112,7 @@ export function validateImportContext(input: Partial<ImportContext>): ImportVali
       testedAt,
       hand: input.hand,
       notes: input.notes?.trim() || undefined,
+      tags: normalizeTags(input.tags),
     },
   };
 }
@@ -103,6 +122,8 @@ export function buildTrackerSession(
   context: ImportContext,
   id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
 ): TrackerSession {
+  const createdAt = new Date().toISOString();
+  const tags = normalizeTags(context.tags);
   return {
     ...parsed,
     id,
@@ -110,7 +131,67 @@ export function buildTrackerSession(
     testedAt: context.testedAt,
     hand: context.hand,
     notes: context.notes,
-    createdAt: new Date().toISOString(),
+    tags,
+    createdAt,
+    updatedAt: createdAt,
+    auditLog: [{
+      id: auditEntryId(id, createdAt, "created"),
+      type: "created",
+      createdAt,
+      changes: [
+        { field: "grip", after: context.grip },
+        { field: "testedAt", after: context.testedAt },
+        ...(context.hand ? [{ field: "hand" as const, after: context.hand }] : []),
+        ...(context.notes ? [{ field: "notes" as const, after: context.notes }] : []),
+        ...(tags.length > 0 ? [{ field: "tags" as const, after: tags }] : []),
+      ],
+    }],
+  };
+}
+
+export function updateTrackerSessionMetadata(
+  session: TrackerSession,
+  context: ImportContext,
+  now = new Date().toISOString(),
+): TrackerSession {
+  const normalizedTags = normalizeTags(context.tags);
+  const changes: TrackerSessionAuditChange[] = [];
+  const beforeTags = normalizeTags(session.tags);
+
+  if (session.grip !== context.grip) changes.push({ field: "grip", before: session.grip, after: context.grip });
+  if (session.testedAt !== context.testedAt) changes.push({ field: "testedAt", before: session.testedAt, after: context.testedAt });
+  if ((session.hand ?? "") !== (context.hand ?? "")) changes.push({ field: "hand", before: session.hand, after: context.hand });
+  if ((session.notes ?? "") !== (context.notes ?? "")) changes.push({ field: "notes", before: session.notes, after: context.notes });
+  if (!tagsEqual(beforeTags, normalizedTags)) changes.push({ field: "tags", before: beforeTags, after: normalizedTags });
+
+  if (changes.length === 0) return normalizeStoredTrackerSession(session);
+
+  return {
+    ...session,
+    grip: context.grip,
+    testedAt: context.testedAt,
+    hand: context.hand,
+    notes: context.notes,
+    tags: normalizedTags,
+    updatedAt: now,
+    auditLog: [
+      ...normalizeAuditLog(session),
+      {
+        id: auditEntryId(session.id, now, "metadata_updated"),
+        type: "metadata_updated",
+        createdAt: now,
+        changes,
+      },
+    ],
+  };
+}
+
+export function normalizeStoredTrackerSession(session: TrackerSession): TrackerSession {
+  return {
+    ...session,
+    tags: normalizeTags(session.tags),
+    updatedAt: session.updatedAt ?? session.createdAt,
+    auditLog: normalizeAuditLog(session),
   };
 }
 
@@ -132,4 +213,28 @@ export function progressPointsForSession(
       value: metric.value,
       unit: metric.unit,
     }));
+}
+
+export function normalizeTags(tags: readonly string[] | undefined): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const tag of tags ?? []) {
+    const next = tag.trim().replace(/\s+/g, " ").toLowerCase();
+    if (!next || seen.has(next)) continue;
+    seen.add(next);
+    normalized.push(next);
+  }
+  return normalized;
+}
+
+function normalizeAuditLog(session: TrackerSession): readonly TrackerSessionAuditEntry[] {
+  return session.auditLog ?? [];
+}
+
+function tagsEqual(a: readonly string[], b: readonly string[]) {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function auditEntryId(sessionId: string, createdAt: string, type: TrackerSessionAuditEntry["type"]) {
+  return `${sessionId}-${type}-${createdAt}`;
 }

@@ -40,6 +40,17 @@ describe("createMemoryTrackerStore", () => {
     await store.clear();
     await expect(store.list()).resolves.toEqual([]);
   });
+
+  it("updates an existing session by id", async () => {
+    const store = createMemoryTrackerStore();
+
+    await store.save(session("one", "2026-08-22T10:00:00.000Z"));
+    await store.save({ ...session("one", "2026-08-23T10:00:00.000Z"), grip: "half crimp", tags: ["rehab"] });
+
+    await expect(store.list()).resolves.toMatchObject([
+      { id: "one", grip: "half crimp", tags: ["rehab"], testedAt: "2026-08-23T10:00:00.000Z" },
+    ]);
+  });
 });
 
 describe("augmentStoredRepeaterMetrics", () => {

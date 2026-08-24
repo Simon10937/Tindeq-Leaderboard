@@ -15,8 +15,11 @@ describe("trackerSessionToSupabaseRow", () => {
       trace: { elapsedUs: [0], forceN: [120] },
       warnings: [],
       grip: "half crimp",
+      tags: ["rehab"],
       testedAt: "2026-08-22T10:00:00.000Z",
       createdAt: "2026-08-22T10:01:00.000Z",
+      updatedAt: "2026-08-22T10:02:00.000Z",
+      auditLog: [{ id: "audit-1", type: "metadata_updated", createdAt: "2026-08-22T10:02:00.000Z", changes: [{ field: "tags", after: ["rehab"] }] }],
     };
 
     expect(trackerSessionToSupabaseRow(session, "user-1")).toMatchObject({

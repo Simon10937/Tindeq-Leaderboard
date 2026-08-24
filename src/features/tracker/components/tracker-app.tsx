@@ -1,14 +1,15 @@
 "use client";
 
-import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ClipboardEvent, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { TrackerProgressChart } from "@/components/charts/tracker-progress-chart";
 import { TrackerTraceChart } from "@/components/charts/tracker-trace-chart";
 import { formatCompactDate, formatMetricValue, formatProgressMetricLabel } from "@/components/charts/chart-utils";
 import { extractCsvFiles, type ExtractedCsvFile } from "@/features/tracker/import/extract-files";
 import { detectTindeqCsv } from "@/features/tracker/parsers/detect";
+import { augmentStoredEnduranceMetrics } from "@/features/tracker/parsers/endurance";
 import { augmentStoredRepeaterMetrics } from "@/features/tracker/parsers/repeater";
 import { parseCsvRows } from "@/features/tracker/parsers/tindeq-shared";
-import { buildTrackerSession, progressPointsForSession, validateImportContext, type ParsedTrackerCsv, type ProgressPoint, type TrackerMetricKey, type TrackerMode, type TrackerSession } from "@/features/tracker/types";
+import { buildTrackerSession, normalizeStoredTrackerSession, normalizeTags, progressPointsForSession, updateTrackerSessionMetadata, validateImportContext, type ImportContext, type ParsedTrackerCsv, type ProgressPoint, type TrackerMetricKey, type TrackerMode, type TrackerSession } from "@/features/tracker/types";
 import { createTrackerStore, type TrackerStore } from "@/features/tracker/storage/local-store";
 import { createSupabaseTrackerStore, createTrackerSupabaseClient, readTrackerAuthState, type TrackerAuthState } from "@/features/tracker/storage/supabase-store";
 
@@ -21,38 +22,55 @@ type DraftImport = Readonly<{
   testedAt: string;
   hand: "" | "left" | "right" | "both";
   notes: string;
+  tags: readonly string[];
+  expanded: boolean;
   saved?: boolean;
 }>;
 
-type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "notes">>;
+type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "notes" | "tags">>;
 type SelectedMetric = "all" | TrackerMetricKey;
 type AvailableMetric = Extract<TrackerSession["metrics"][number], { available: true }>;
+type ActiveTab = "progress" | "import" | "history";
+type SessionEditState = Readonly<{ sessionId: string; context: ImportContext }>;
 
 const metricOptions: { key: TrackerMetricKey; label: string; mode?: TrackerMode }[] = [
   { key: "criticalForceN", label: "Critical force", mode: "endurance" },
+  { key: "enduranceAverageForceN", label: "Endurance average force", mode: "endurance" },
   { key: "repeaterAverageForceN", label: "Repeater average force", mode: "repeater" },
   { key: "peakForceN", label: "Peak force" },
 ];
 
 const gripPresets = ["20mm edge", "15mm edge", "half crimp", "rehab half crimp", "open hand", "pinch", "jug"];
+const tagPresets = ["rehab", "max effort", "repeaters", "endurance", "skin", "warm-up", "block weight"];
 const weeklyTargetStorageKey = "tindeq-tracker-weekly-target";
 
-export function TrackerApp() {
+export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: ActiveTab }>) {
   const localStoreRef = useRef<TrackerStore | null>(null);
   const storeRef = useRef<TrackerStore | null>(null);
   const supabaseRef = useRef<ReturnType<typeof createTrackerSupabaseClient>>(undefined);
   const refreshGenerationRef = useRef(0);
   const [sessions, setSessions] = useState<TrackerSession[]>([]);
   const [drafts, setDrafts] = useState<DraftImport[]>([]);
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => typeof window === "undefined" ? initialTab : readActiveTabFromLocation(initialTab));
   const [selectedMetric, setSelectedMetric] = useState<SelectedMetric>("all");
   const [modeFilter, setModeFilter] = useState<"all" | TrackerMode>("all");
   const [gripFilter, setGripFilter] = useState("all");
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
-  const [status, setStatus] = useState("Loading local tracker data...");
+  const [status, setStatus] = useState<string | undefined>();
   const [reimportNoticeCount, setReimportNoticeCount] = useState(0);
   const [weeklyTarget, setWeeklyTarget] = useState(3);
   const [authState, setAuthState] = useState<TrackerAuthState>({ status: "checking" });
   const [authEmail, setAuthEmail] = useState("");
+  const [draftTagInputs, setDraftTagInputs] = useState<Record<string, string>>({});
+  const [sessionEdit, setSessionEdit] = useState<SessionEditState>();
+  const [sessionTagInput, setSessionTagInput] = useState("");
+
+  useEffect(() => {
+    const syncTabFromUrl = () => setActiveTab(readActiveTabFromLocation(initialTab));
+    syncTabFromUrl();
+    window.addEventListener("popstate", syncTabFromUrl);
+    return () => window.removeEventListener("popstate", syncTabFromUrl);
+  }, [initialTab]);
 
   useEffect(() => {
     const localStore = createTrackerStore();
@@ -64,7 +82,7 @@ export function TrackerApp() {
     if (!supabase) {
       window.setTimeout(() => {
         setAuthState({ status: "local" });
-        void refreshSessions(localStore).then(() => setStatus("Local tracker ready."));
+        void refreshSessions(localStore);
       }, 0);
       return;
     }
@@ -95,13 +113,20 @@ export function TrackerApp() {
     if (!store) return;
     const generation = ++refreshGenerationRef.current;
     const storedSessions = await store.list();
-    const normalized = storedSessions.map((session) => augmentStoredRepeaterMetrics(session));
+    const normalized = storedSessions
+      .map((session) => augmentStoredRepeaterMetrics(normalizeStoredTrackerSession(session)))
+      .map((result) => {
+        const endurance = augmentStoredEnduranceMetrics(result.session);
+        return {
+          session: endurance.session,
+          changed: result.changed || endurance.changed,
+          needsReimport: result.needsReimport || endurance.needsReimport,
+        };
+      });
     if (generation !== refreshGenerationRef.current) return;
 
     await Promise.all(normalized.filter((result) => result.changed).map(async (result) => {
       if (generation !== refreshGenerationRef.current) return;
-      const current = await store.get(result.session.id);
-      if (!current || generation !== refreshGenerationRef.current) return;
       await store.save(result.session);
     }));
     if (generation !== refreshGenerationRef.current) return;
@@ -179,6 +204,7 @@ export function TrackerApp() {
       testedAt: draft.testedAt,
       hand: draft.hand || undefined,
       notes: draft.notes,
+      tags: draft.tags,
     });
     if (!validation.ok) {
       setStatus(validation.errors.join(" "));
@@ -187,8 +213,8 @@ export function TrackerApp() {
 
     await store.save(buildTrackerSession(draft.parsed, validation.context));
     await refreshSessions(store);
-    setDrafts((current) => current.map((item) => item.id === draft.id ? { ...item, saved: true } : item));
-    setStatus(`${draft.filename} saved locally.`);
+    setDrafts((current) => current.map((item) => item.id === draft.id ? { ...item, saved: true, expanded: false } : item));
+    setStatus(`${draft.filename} saved ${authState.status === "signed-in" ? "to Supabase" : "locally"}.`);
   }
 
   async function requestMagicLink() {
@@ -219,7 +245,7 @@ export function TrackerApp() {
       return;
     }
 
-    await activateLocalTrackerStore(nextAuthState.status === "local" ? "Local tracker ready." : "Sign in to save sessions privately in Supabase.");
+    await activateLocalTrackerStore(undefined);
   }
 
   async function activateSupabaseTrackerStore(userId: string) {
@@ -236,7 +262,7 @@ export function TrackerApp() {
     setStatus(`Supabase tracker ready${localSessions.length > 0 ? `; synced ${localSessions.length} local session${localSessions.length === 1 ? "" : "s"}.` : "."}`);
   }
 
-  async function activateLocalTrackerStore(nextStatus: string) {
+  async function activateLocalTrackerStore(nextStatus: string | undefined) {
     const localStore = localStoreRef.current;
     if (!localStore) return;
     storeRef.current = localStore;
@@ -251,6 +277,7 @@ export function TrackerApp() {
     await store.delete(id);
     await refreshSessions(store);
     if (selectedSessionId === id) setSelectedSessionId(undefined);
+    if (sessionEdit?.sessionId === id) cancelSessionEdit();
     setStatus("Session deleted.");
   }
 
@@ -271,7 +298,66 @@ export function TrackerApp() {
     persistWeeklyTarget(nextTarget);
   }
 
+  function navigateToTab(tab: ActiveTab, event?: MouseEvent<HTMLAnchorElement>) {
+    event?.preventDefault();
+    setActiveTab(tab);
+    window.history.pushState({ view: tab }, "", routeForTab(tab));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function dismissDraft(id: string) {
+    setDrafts((current) => current.filter((draft) => draft.id !== id));
+    setDraftTagInputs((current) => removeRecordKey(current, id));
+  }
+
+  function dismissSavedDrafts() {
+    setDrafts((current) => current.filter((draft) => !draft.saved));
+    setDraftTagInputs((current) => removeRecordKeys(current, drafts.filter((draft) => draft.saved).map((draft) => draft.id)));
+  }
+
+  function startSessionEdit(session: TrackerSession) {
+    setSessionEdit({
+      sessionId: session.id,
+      context: {
+        grip: session.grip,
+        testedAt: toDatetimeLocalValue(session.testedAt),
+        hand: session.hand,
+        notes: session.notes,
+        tags: normalizeTags(session.tags),
+      },
+    });
+    setSessionTagInput("");
+  }
+
+  function cancelSessionEdit() {
+    setSessionEdit(undefined);
+    setSessionTagInput("");
+  }
+
+  async function saveSessionEdit(session: TrackerSession) {
+    const store = storeRef.current;
+    if (!store || !sessionEdit) return;
+    const validation = validateImportContext(sessionEdit.context);
+    if (!validation.ok) {
+      setStatus(validation.errors.join(" "));
+      return;
+    }
+
+    const updated = updateTrackerSessionMetadata(session, validation.context);
+    await store.save(updated);
+    await refreshSessions(store);
+    setSelectedSessionId(updated.id);
+    cancelSessionEdit();
+    setStatus("Session updated.");
+  }
+
   const grips = useMemo(() => ["all", ...Array.from(new Set([...gripPresets, ...sessions.map((session) => session.grip)])).sort()], [sessions]);
+  const tagSuggestions = useMemo(() => Array.from(new Set([
+    ...tagPresets,
+    ...sessions.flatMap((session) => normalizeTags(session.tags)),
+    ...drafts.flatMap((draft) => normalizeTags(draft.tags)),
+  ])).sort(), [drafts, sessions]);
+  const visibleImportDrafts = drafts;
   const filteredSessions = sessions.filter((session) =>
     (modeFilter === "all" || session.mode === modeFilter) &&
     (gripFilter === "all" || session.grip === gripFilter));
@@ -293,18 +379,19 @@ export function TrackerApp() {
   const personalBest = bestProgressPoint(progressPoints);
   const weeklyCount = countSessionsThisWeek(sessions);
   const weeklyPercent = Math.min(100, Math.round((weeklyCount / weeklyTarget) * 100));
+  const pageHeading = pageHeadingForTab(activeTab);
 
   return (
     <>
       <header className="app-bar">
-        <a className="brand-mark" href="#progress" aria-label="Tracker progress">
+        <a className="brand-mark brand-button" href={routeForTab("progress")} onClick={(event) => navigateToTab("progress", event)} aria-label="Tracker progress">
           <span aria-hidden="true">T</span>
           <strong>Tracker</strong>
         </a>
         <nav className="top-nav" aria-label="Primary">
-          <a href="#progress">Progress</a>
-          <a href="#import">Import</a>
-          <a href="#history">History</a>
+          <TabButton activeTab={activeTab} tab="progress" navigateToTab={navigateToTab}>Progress</TabButton>
+          <TabButton activeTab={activeTab} tab="import" navigateToTab={navigateToTab}>Import</TabButton>
+          <TabButton activeTab={activeTab} tab="history" navigateToTab={navigateToTab}>History</TabButton>
         </nav>
         <button className="icon-button" type="button" onClick={resetAll}>Reset</button>
       </header>
@@ -312,9 +399,9 @@ export function TrackerApp() {
       <main className="tracker-shell">
         <section className="tracker-welcome" aria-labelledby="tracker-title">
           <div>
-            <p className="eyebrow">Personal Tindeq tracker</p>
-            <h1 id="tracker-title">Track grip progress.</h1>
-            <p className="lede">Upload Tindeq exports, tag the grip, and keep the important chart local to this browser.</p>
+            <p className="eyebrow">{pageHeading.eyebrow}</p>
+            <h1 id="tracker-title">{pageHeading.title}</h1>
+            <p className="lede">{pageHeading.description}</p>
           </div>
           <div className="session-counter" aria-label={`${sessions.length} saved sessions`}>
             <span>{sessions.length}</span>
@@ -322,21 +409,30 @@ export function TrackerApp() {
           </div>
         </section>
 
-        <section className="tracker-panel weekly-target" aria-labelledby="weekly-target-title">
-          <div>
-            <p className="eyebrow">Weekly target</p>
-            <h2 id="weekly-target-title">{weeklyCount} / {weeklyTarget} sessions</h2>
-          </div>
-          <div className="target-meter" aria-label={`Weekly target ${weeklyCount} of ${weeklyTarget} sessions`}>
-            <div><span style={{ width: `${weeklyPercent}%` }} /></div>
-            <small>{weeklyCount >= weeklyTarget ? "Target met" : `${Math.max(weeklyTarget - weeklyCount, 0)} to go this week`}</small>
-          </div>
-          <label className="target-control">Target
-            <input type="number" min="1" max="14" value={weeklyTarget} onChange={(event) => updateWeeklyTarget(Number(event.currentTarget.value))} />
-          </label>
-        </section>
+        {status && (
+          <section className="tracker-panel status-panel" role="status">
+            <p>{status}</p>
+            <button className="text-button" type="button" onClick={() => setStatus(undefined)}>Dismiss</button>
+          </section>
+        )}
 
-        <section className="tracker-panel auth-panel" aria-labelledby="auth-title">
+        {activeTab === "progress" && (
+          <section className="tracker-panel weekly-target" aria-labelledby="weekly-target-title">
+            <div>
+              <p className="eyebrow">Weekly target</p>
+              <h2 id="weekly-target-title">{weeklyCount} / {weeklyTarget} sessions</h2>
+            </div>
+            <div className="target-meter" aria-label={`Weekly target ${weeklyCount} of ${weeklyTarget} sessions`}>
+              <div><span style={{ width: `${weeklyPercent}%` }} /></div>
+              <small>{weeklyCount >= weeklyTarget ? "Target met" : `${Math.max(weeklyTarget - weeklyCount, 0)} to go this week`}</small>
+            </div>
+            <label className="target-control">Target
+              <input type="number" min="1" max="14" value={weeklyTarget} onChange={(event) => updateWeeklyTarget(Number(event.currentTarget.value))} />
+            </label>
+          </section>
+        )}
+
+        {activeTab === "progress" && authState.status !== "local" && <section className="tracker-panel auth-panel compact-panel" aria-labelledby="auth-title">
           <div>
             <p className="eyebrow">Private data</p>
             <h2 id="auth-title">{authTitle(authState)}</h2>
@@ -349,27 +445,12 @@ export function TrackerApp() {
               <label>Email
                 <input type="email" value={authEmail} autoComplete="email" placeholder="you@example.com" onChange={(event) => setAuthEmail(event.currentTarget.value)} />
               </label>
-              <button className="button" type="button" onClick={() => void requestMagicLink()} disabled={authState.status === "local"}>Email sign-in link</button>
+              <button className="button" type="button" onClick={() => void requestMagicLink()}>Email sign-in link</button>
             </div>
           )}
-        </section>
+        </section>}
 
-        <section className="quick-actions" aria-label="Quick actions">
-          <a className="action-tile action-primary" href="#import">
-            <span aria-hidden="true">+</span>
-            <strong>Import new data</strong>
-          </a>
-          <a className="action-tile" href="#progress">
-            <span aria-hidden="true">chart</span>
-            <strong>View progress</strong>
-          </a>
-          <a className="action-tile" href="#history">
-            <span aria-hidden="true">list</span>
-            <strong>Session history</strong>
-          </a>
-        </section>
-
-        <section className="tracker-panel latest-panel" aria-labelledby="latest-title">
+        {activeTab === "progress" && <section className="tracker-panel latest-panel" aria-labelledby="latest-title">
           <div className="section-heading">
             <p className="eyebrow">Latest activity</p>
             <h2 id="latest-title">{latestSession ? `${modeLabel(latestSession.mode)} ${formatCompactDate(latestSession.testedAt)}` : "No sessions yet"}</h2>
@@ -385,12 +466,12 @@ export function TrackerApp() {
               <strong>{latestPeak ? formatMetricValue(latestPeak) : "--"}</strong>
             </div>
           </div>
-        </section>
+        </section>}
 
-      <section className="tracker-panel import-panel" id="import" aria-labelledby="import-title">
+      {activeTab === "import" && <section className="tracker-panel import-panel" aria-labelledby="import-title">
         <div>
           <h2 id="import-title">Import</h2>
-          <p>{status}</p>
+          <p className="inline-status">Choose Tindeq ZIP or CSV exports, then review each detected file before saving.</p>
         </div>
         <div className="import-actions">
           <label className="file-picker">
@@ -409,11 +490,16 @@ export function TrackerApp() {
             <span>iOS Safari blocks copied ZIP files here. Save or share the Tindeq export to Files, then use the ZIP picker above.</span>
           </div>
         </div>
-      </section>
+      </section>}
 
-      {drafts.length > 0 && (
+      {activeTab === "import" && visibleImportDrafts.length > 0 && (
         <section className="draft-list" aria-label="Pending imports">
-          {drafts.map((draft) => (
+          {visibleImportDrafts.some((draft) => draft.saved) && (
+            <div className="draft-toolbar">
+              <button className="text-button" type="button" onClick={dismissSavedDrafts}>Dismiss saved imports</button>
+            </div>
+          )}
+          {visibleImportDrafts.map((draft) => (
             <article className="draft-card" key={draft.id}>
               <div className="draft-card-head">
                 <div>
@@ -421,8 +507,14 @@ export function TrackerApp() {
                   <h3>{draft.filename}</h3>
                   <p>{draft.error ?? `${modeLabel(draft.parsed?.mode)} - ${availableMetricText(draft.parsed)}`}</p>
                 </div>
+                <div className="draft-card-actions">
+                  {draft.parsed && !draft.saved && (
+                    <button className="text-button" type="button" onClick={() => updateDraft(draft.id, { expanded: !draft.expanded })}>{draft.expanded ? "Collapse" : "Expand"}</button>
+                  )}
+                  <button className="text-button" type="button" onClick={() => dismissDraft(draft.id)}>Dismiss</button>
+                </div>
               </div>
-              {draft.parsed && !draft.saved && (
+              {draft.parsed && !draft.saved && draft.expanded && (
                 <div className="draft-fields">
                   <fieldset className="chip-field">
                     <legend>Assign grip type</legend>
@@ -453,16 +545,25 @@ export function TrackerApp() {
                   <label className="draft-notes">Notes
                     <textarea value={draft.notes} onChange={(event) => updateDraft(draft.id, { notes: event.currentTarget.value })} />
                   </label>
+                  <TagEditor
+                    label="Tags"
+                    tags={draft.tags}
+                    suggestions={tagSuggestions}
+                    inputValue={draftTagInputs[draft.id] ?? ""}
+                    onInputChange={(value) => setDraftTagInputs((current) => ({ ...current, [draft.id]: value }))}
+                    onAdd={(tag) => updateDraft(draft.id, { tags: addTag(draft.tags, tag) })}
+                    onRemove={(tag) => updateDraft(draft.id, { tags: draft.tags.filter((item) => item !== tag) })}
+                  />
                   <button className="button" type="button" onClick={() => void saveDraft(draft)}>Save local session</button>
                 </div>
               )}
-              {draft.saved && <p className="notice" role="status">Saved locally.</p>}
+              {draft.saved && <p className="notice compact-notice" role="status">Saved {authState.status === "signed-in" ? "to Supabase" : "locally"}.</p>}
             </article>
           ))}
         </section>
       )}
 
-      <section className="tracker-panel progress-panel" id="progress" aria-labelledby="progress-title">
+      {activeTab === "progress" && <section className="tracker-panel progress-panel" aria-labelledby="progress-title">
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Progress</p>
@@ -510,10 +611,10 @@ export function TrackerApp() {
         </div>
         <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} />
         {traceOnlyCount > 0 && <p className="notice">{traceOnlyCount} saved session{traceOnlyCount === 1 ? "" : "s"} are trace-only for {effectiveSelectedMetric === "all" ? "these metrics" : "this metric"}.</p>}
-        {reimportNoticeCount > 0 && <p className="notice">{reimportNoticeCount} saved Repeater session{reimportNoticeCount === 1 ? "" : "s"} need re-import before estimated average or peak force can be derived.</p>}
-      </section>
+        {reimportNoticeCount > 0 && <p className="notice">{reimportNoticeCount} saved session{reimportNoticeCount === 1 ? "" : "s"} need re-import before all trace-derived force metrics can be derived.</p>}
+      </section>}
 
-      <section className="tracker-grid" id="history" aria-label="Saved sessions">
+      {activeTab === "history" && <section className="tracker-grid" aria-label="Saved sessions">
         <div className="tracker-panel history-panel">
           <div className="section-heading">
             <p className="eyebrow">History</p>
@@ -543,25 +644,122 @@ export function TrackerApp() {
           </div>
           {selectedSession ? (
             <>
-              <dl className="metric-list">
-                {selectedSession.metrics.map((metric) => (
-                  <div key={metric.key}>
-                    <dt>{metric.label}</dt>
-                    <dd>{metric.available ? formatMetricValue(metric) : metric.reason}</dd>
+              {sessionEdit?.sessionId === selectedSession.id ? (
+                <div className="draft-fields session-edit-form">
+                  <fieldset className="chip-field">
+                    <legend>Primary grip</legend>
+                    <div className="chip-list">
+                      {gripPresets.map((grip) => (
+                        <button
+                          className={sessionEdit.context.grip === grip ? "chip chip-selected" : "chip"}
+                          key={grip}
+                          type="button"
+                          onClick={() => setSessionEdit((current) => current ? { ...current, context: { ...current.context, grip } } : current)}
+                        >
+                          {grip}
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <label>Date
+                    <input type="datetime-local" value={sessionEdit.context.testedAt} onChange={(event) => {
+                      const testedAt = event.currentTarget.value;
+                      setSessionEdit((current) => current ? { ...current, context: { ...current.context, testedAt } } : current);
+                    }} />
+                  </label>
+                  <label>Hand
+                    <select value={sessionEdit.context.hand ?? ""} onChange={(event) => {
+                      const hand = emptyToUndefined(event.currentTarget.value) as ImportContext["hand"];
+                      setSessionEdit((current) => current ? { ...current, context: { ...current.context, hand } } : current);
+                    }}>
+                      <option value="">Not set</option>
+                      <option value="left">Left</option>
+                      <option value="right">Right</option>
+                      <option value="both">Both</option>
+                    </select>
+                  </label>
+                  <label className="draft-notes">Notes
+                    <textarea value={sessionEdit.context.notes ?? ""} onChange={(event) => {
+                      const notes = event.currentTarget.value;
+                      setSessionEdit((current) => current ? { ...current, context: { ...current.context, notes } } : current);
+                    }} />
+                  </label>
+                  <TagEditor
+                    label="Tags"
+                    tags={normalizeTags(sessionEdit.context.tags)}
+                    suggestions={tagSuggestions}
+                    inputValue={sessionTagInput}
+                    onInputChange={setSessionTagInput}
+                    onAdd={(tag) => setSessionEdit((current) => current ? { ...current, context: { ...current.context, tags: addTag(normalizeTags(current.context.tags), tag) } } : current)}
+                    onRemove={(tag) => setSessionEdit((current) => current ? { ...current, context: { ...current.context, tags: normalizeTags(current.context.tags).filter((item) => item !== tag) } } : current)}
+                  />
+                  <div className="form-actions">
+                    <button className="button" type="button" onClick={() => void saveSessionEdit(selectedSession)}>Save changes</button>
+                    <button className="button button-secondary" type="button" onClick={cancelSessionEdit}>Cancel</button>
                   </div>
-                ))}
-              </dl>
-              <TrackerTraceChart session={selectedSession} />
+                </div>
+              ) : (
+                <>
+                  <div className="session-meta">
+                    <span>{selectedSession.grip}</span>
+                    {selectedSession.hand && <span>{selectedSession.hand}</span>}
+                    {normalizeTags(selectedSession.tags).map((tag) => <span key={tag}>{tag}</span>)}
+                  </div>
+                  <div className="form-actions">
+                    <button className="button button-secondary" type="button" onClick={() => startSessionEdit(selectedSession)}>Edit details</button>
+                  </div>
+                  <dl className="metric-list">
+                    {selectedSession.metrics.map((metric) => (
+                      <div key={metric.key}>
+                        <dt>{metric.label}</dt>
+                        <dd>{metric.available ? formatMetricValue(metric) : metric.reason}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <details className="audit-details">
+                    <summary>Source and audit</summary>
+                    <dl className="metric-list">
+                      <div><dt>Filename</dt><dd>{selectedSession.filename}</dd></div>
+                      <div><dt>Parser</dt><dd>{selectedSession.parserVersion}</dd></div>
+                      <div><dt>Source</dt><dd>{selectedSession.sourceSummary}</dd></div>
+                      <div><dt>Created</dt><dd>{formatCompactDate(selectedSession.createdAt)}</dd></div>
+                      <div><dt>Updated</dt><dd>{formatCompactDate(selectedSession.updatedAt ?? selectedSession.createdAt)}</dd></div>
+                    </dl>
+                    {Object.keys(selectedSession.vendorMetadata).length > 0 && (
+                      <div className="audit-block">
+                        <h3>Tindeq metadata</h3>
+                        <dl className="metric-list">
+                          {Object.entries(selectedSession.vendorMetadata).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}
+                        </dl>
+                      </div>
+                    )}
+                    {selectedSession.auditLog && selectedSession.auditLog.length > 0 && (
+                      <div className="audit-block">
+                        <h3>Edit history</h3>
+                        <ul className="audit-list">
+                          {selectedSession.auditLog.map((entry) => (
+                            <li key={entry.id}>
+                              <strong>{entry.type === "created" ? "Imported" : "Edited"} {formatCompactDate(entry.createdAt)}</strong>
+                              <span>{entry.changes.map((change) => change.field).join(", ")}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </details>
+                  <TrackerTraceChart session={selectedSession} />
+                </>
+              )}
             </>
           ) : <p>Save a CSV to inspect its full trace.</p>}
         </div>
-      </section>
+      </section>}
     </main>
 
       <nav className="bottom-nav" aria-label="Mobile primary">
-        <a href="#progress"><span aria-hidden="true">chart</span>Progress</a>
-        <a href="#import"><span aria-hidden="true">+</span>Import</a>
-        <a href="#history"><span aria-hidden="true">list</span>History</a>
+        <TabButton activeTab={activeTab} tab="progress" navigateToTab={navigateToTab}><span aria-hidden="true">chart</span>Progress</TabButton>
+        <TabButton activeTab={activeTab} tab="import" navigateToTab={navigateToTab}><span aria-hidden="true">+</span>Import</TabButton>
+        <TabButton activeTab={activeTab} tab="history" navigateToTab={navigateToTab}><span aria-hidden="true">list</span>History</TabButton>
       </nav>
     </>
   );
@@ -569,6 +767,166 @@ export function TrackerApp() {
   function updateDraft(id: string, patch: Partial<DraftImport>) {
     setDrafts((current) => current.map((draft) => draft.id === id ? { ...draft, ...patch } : draft));
   }
+}
+
+function TabButton({
+  activeTab,
+  tab,
+  navigateToTab,
+  children,
+}: Readonly<{
+  activeTab: ActiveTab;
+  tab: ActiveTab;
+  navigateToTab: (tab: ActiveTab, event?: MouseEvent<HTMLAnchorElement>) => void;
+  children: ReactNode;
+}>) {
+  return (
+    <a
+      className={activeTab === tab ? "tab-button active-tab" : "tab-button"}
+      href={routeForTab(tab)}
+      aria-current={activeTab === tab ? "page" : undefined}
+      onClick={(event) => navigateToTab(tab, event)}
+    >
+      {children}
+    </a>
+  );
+}
+
+function TagEditor({
+  label,
+  tags,
+  suggestions,
+  inputValue,
+  onInputChange,
+  onAdd,
+  onRemove,
+}: Readonly<{
+  label: string;
+  tags: readonly string[];
+  suggestions: readonly string[];
+  inputValue: string;
+  onInputChange: (value: string) => void;
+  onAdd: (tag: string) => void;
+  onRemove: (tag: string) => void;
+}>) {
+  const selected = new Set(tags);
+  const availableSuggestions = suggestions.filter((tag) => !selected.has(tag)).slice(0, 8);
+
+  function submitTag() {
+    const [tag] = normalizeTags([inputValue]);
+    if (!tag) return;
+    onAdd(tag);
+    onInputChange("");
+  }
+
+  return (
+    <fieldset className="chip-field tag-editor">
+      <legend>{label}</legend>
+      {tags.length > 0 && (
+        <div className="chip-list selected-tags">
+          {tags.map((tag) => (
+            <button className="chip chip-selected" key={tag} type="button" onClick={() => onRemove(tag)}>
+              {tag} ×
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="tag-input-row">
+        <input value={inputValue} placeholder="Add tag" onChange={(event) => onInputChange(event.currentTarget.value)} onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            submitTag();
+          }
+        }} />
+        <button className="button button-secondary" type="button" onClick={submitTag}>Add</button>
+      </div>
+      {availableSuggestions.length > 0 && (
+        <div className="chip-list">
+          {availableSuggestions.map((tag) => (
+            <button className="chip" key={tag} type="button" onClick={() => onAdd(tag)}>
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
+function addTag(tags: readonly string[], tag: string) {
+  return normalizeTags([...tags, tag]);
+}
+
+function readActiveTabFromLocation(fallback: ActiveTab): ActiveTab {
+  const url = new URL(window.location.href);
+  const pathTab = tabFromPathname(url.pathname);
+  if (pathTab) return pathTab;
+
+  const queryTab = url.searchParams.get("view");
+  return isActiveTab(queryTab) ? queryTab : fallback;
+}
+
+function tabFromPathname(pathname: string): ActiveTab | undefined {
+  const segment = pathname.split("/").filter(Boolean)[0] ?? "progress";
+  return isActiveTab(segment) ? segment : undefined;
+}
+
+function routeForTab(tab: ActiveTab) {
+  return tab === "progress" ? "/progress" : `/${tab}`;
+}
+
+function isActiveTab(tab: string | null): tab is ActiveTab {
+  return tab === "progress" || tab === "import" || tab === "history";
+}
+
+function pageHeadingForTab(tab: ActiveTab) {
+  if (tab === "import") {
+    return {
+      eyebrow: "Import",
+      title: "Import data",
+      description: "Choose Tindeq ZIP or CSV exports, review the detected files, then save them into your tracker.",
+    };
+  }
+
+  if (tab === "history") {
+    return {
+      eyebrow: "History",
+      title: "Session history",
+      description: "Review saved sessions, inspect raw traces, and edit grip, hand, notes, or tags after import.",
+    };
+  }
+
+  return {
+    eyebrow: "Progress",
+    title: "Track grip progress.",
+    description: "Follow average and peak force across grip types, modes, and weekly training targets.",
+  };
+}
+
+function removeRecordKey(record: Record<string, string>, key: string) {
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
+
+function removeRecordKeys(record: Record<string, string>, keys: readonly string[]) {
+  const next = { ...record };
+  for (const key of keys) delete next[key];
+  return next;
+}
+
+function emptyToUndefined(value: string) {
+  return value === "" ? undefined : value;
+}
+
+function toDatetimeLocalValue(value: string) {
+  const localMatch = value.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/);
+  if (localMatch) return localMatch[1];
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return offsetDate.toISOString().slice(0, 16);
 }
 
 function filesFromClipboard(clipboardData: DataTransfer): File[] {
@@ -709,6 +1067,8 @@ function createDraftFromCsv(source: string, filename: string, idSuffix: string, 
     testedAt: defaults.testedAt ?? new Date().toISOString().slice(0, 16),
     hand: "" as const,
     notes: defaults.notes ?? "",
+    tags: defaults.tags ?? [],
+    expanded: true,
   };
   if (detection.status === "invalid") return { ...base, error: detection.error };
   return {

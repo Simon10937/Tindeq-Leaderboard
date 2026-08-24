@@ -1,5 +1,5 @@
 import type { ParsedTrackerCsv, TrackerMetric, TrackerSession } from "@/features/tracker/types";
-import { findTraceHeader, maxValue, parseCsvRows, parseFiniteNumber, parseTraceRows, KGF_TO_NEWTONS } from "./tindeq-shared";
+import { findTraceHeader, maxValue, mergeMetrics, parseCsvRows, parseFiniteNumber, parseTraceRows, validForceSamples, KGF_TO_NEWTONS } from "./tindeq-shared";
 
 export const REPEATER_PARSER_VERSION = "tindeq-repeater-csv/v1";
 const ACTIVE_FORCE_THRESHOLD_RATIO = 0.5;
@@ -83,20 +83,8 @@ function repeaterMetricsFromTrace(metadata: Readonly<Record<string, string>>, fo
   return { metrics, warnings };
 }
 
-function mergeMetrics(existing: readonly TrackerMetric[], replacements: readonly TrackerMetric[]) {
-  const replacementKeys = new Set(replacements.map((metric) => metric.key));
-  return [
-    ...existing.filter((metric) => !replacementKeys.has(metric.key)),
-    ...replacements,
-  ];
-}
-
 function mergeWarnings(existing: readonly string[], warnings: readonly string[]) {
   return Array.from(new Set([...existing, ...warnings]));
-}
-
-function validForceSamples(forceN: readonly number[]) {
-  return forceN.filter((value) => Number.isFinite(value) && value >= 0);
 }
 
 function averageActiveForce(forceN: readonly number[], peakForceN: number) {
