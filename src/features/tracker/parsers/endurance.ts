@@ -34,23 +34,36 @@ export function parseEnduranceCsv(source: string, filename = "endurance.csv"): P
 }
 
 export function augmentStoredEnduranceMetrics(session: TrackerSession): { session: TrackerSession; changed: boolean; needsReimport: boolean } {
-  if (session.mode !== "endurance") return { session, changed: false, needsReimport: false };
+  if (session.mode !== "endurance" && !isStoredEnduranceTrace(session)) return { session, changed: false, needsReimport: false };
 
   const hasAverage = session.metrics.some((metric) => metric.key === "enduranceAverageForceN" && metric.available);
   const hasPeak = session.metrics.some((metric) => metric.key === "peakForceN" && metric.available);
-  if (hasAverage && hasPeak) return { session, changed: false, needsReimport: false };
+  const normalizedSession = session.mode === "endurance" ? session : {
+    ...session,
+    mode: "endurance" as const,
+    sourceSummary: "Endurance",
+    parserVersion: `${session.parserVersion}+endurance-trace-backfill`,
+    warnings: session.warnings.filter((warning) => !warning.toLowerCase().includes("unsupported")),
+  };
+  if (hasAverage && hasPeak && normalizedSession === session) return { session, changed: false, needsReimport: false };
 
-  const metrics = enduranceTraceMetrics(session.trace.forceN);
-  if (!metrics.some((metric) => metric.available)) return { session, changed: false, needsReimport: true };
+  const metrics = enduranceTraceMetrics(normalizedSession.trace.forceN);
+  if (!metrics.some((metric) => metric.available)) return { session: normalizedSession, changed: normalizedSession !== session, needsReimport: true };
 
   return {
     session: {
-      ...session,
-      metrics: mergeMetrics(session.metrics, metrics),
+      ...normalizedSession,
+      metrics: mergeMetrics(normalizedSession.metrics, metrics),
     },
     changed: true,
     needsReimport: false,
   };
+}
+
+function isStoredEnduranceTrace(session: TrackerSession) {
+  if (session.mode !== "unsupported_trace") return false;
+  const text = `${session.filename} ${session.sourceSummary} ${Object.values(session.vendorMetadata).join(" ")} ${session.tags?.join(" ") ?? ""}`.toLowerCase();
+  return text.includes("endurance");
 }
 
 function enduranceTraceMetrics(forceN: readonly number[]): TrackerMetric[] {

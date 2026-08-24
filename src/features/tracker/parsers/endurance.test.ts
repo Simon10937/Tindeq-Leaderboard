@@ -61,4 +61,42 @@ describe("parseEnduranceCsv", () => {
       value: 30,
     });
   });
+
+  it("upgrades stored endurance trace-only sessions with average and max metrics", () => {
+    const session: TrackerSession = {
+      id: "trace-only-endurance",
+      mode: "unsupported_trace",
+      parserVersion: "tindeq-unsupported-trace/v1",
+      filename: "endurance_test_single finger endurance _22_08_2026_10_03_43.csv",
+      sourceSummary: "Unsupported trace",
+      vendorMetadata: {},
+      metrics: [
+        { key: "criticalForceN", label: "Critical force", available: false, reason: "Unsupported CSV shape" },
+        { key: "repeaterAverageForceN", label: "Repeater average force", available: false, reason: "Unsupported CSV shape" },
+      ],
+      trace: { elapsedUs: [0, 1_000_000, 2_000_000], forceN: [12, 18, 24] },
+      warnings: ["This CSV has a readable trace but no supported Endurance or Repeater summary."],
+      grip: "rehab half crimp",
+      hand: "right",
+      testedAt: "2026-08-24T10:03",
+      createdAt: "2026-08-24T10:03",
+    };
+
+    const augmented = augmentStoredEnduranceMetrics(session);
+
+    expect(augmented.changed).toBe(true);
+    expect(augmented.needsReimport).toBe(false);
+    expect(augmented.session).toMatchObject({
+      mode: "endurance",
+      sourceSummary: "Endurance",
+    });
+    expect(augmented.session.metrics.find((metric) => metric.key === "enduranceAverageForceN")).toMatchObject({
+      available: true,
+      value: 18,
+    });
+    expect(augmented.session.metrics.find((metric) => metric.key === "peakForceN")).toMatchObject({
+      available: true,
+      value: 24,
+    });
+  });
 });
