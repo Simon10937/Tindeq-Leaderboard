@@ -31,6 +31,7 @@ type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "notes" | "
 type SelectedMetric = "all" | TrackerMetricKey;
 type AvailableMetric = Extract<TrackerSession["metrics"][number], { available: true }>;
 type ActiveTab = "progress" | "import" | "history";
+type ChartMode = Extract<TrackerMode, "endurance" | "repeater">;
 type SessionEditState = Readonly<{ sessionId: string; context: ImportContext }>;
 type MetricOption = Readonly<{ key: TrackerMetricKey; label: string; mode?: TrackerMode }>;
 
@@ -53,8 +54,8 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const [sessions, setSessions] = useState<TrackerSession[]>([]);
   const [drafts, setDrafts] = useState<DraftImport[]>([]);
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => typeof window === "undefined" ? initialTab : readActiveTabFromLocation(initialTab));
-  const [selectedMetric, setSelectedMetric] = useState<SelectedMetric>("repeaterAverageForceN");
-  const [modeFilter, setModeFilter] = useState<"all" | TrackerMode>("all");
+  const [selectedMetric, setSelectedMetric] = useState<SelectedMetric>("all");
+  const [modeFilter, setModeFilter] = useState<ChartMode>("repeater");
   const [gripFilter, setGripFilter] = useState("all");
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
   const [status, setStatus] = useState<string | undefined>();
@@ -371,7 +372,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   ])).sort(), [drafts, sessions]);
   const visibleImportDrafts = drafts;
   const filteredSessions = sessions.filter((session) =>
-    (modeFilter === "all" || session.mode === modeFilter) &&
+    session.mode === modeFilter &&
     (gripFilter === "all" || session.grip === gripFilter));
   const historySessions = sessions;
   const metricAvailability = useMemo(() => summarizeMetricAvailability(filteredSessions), [filteredSessions]);
@@ -383,15 +384,17 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const effectiveSelectedMetric = selectedMetric !== "all" && !metricAvailability.get(selectedMetric)?.count ? preferredMetric ?? "all" : selectedMetric;
   const selectedMetricKey = effectiveSelectedMetric === "all" ? undefined : effectiveSelectedMetric;
   const progressPoints = filteredSessions.flatMap((session) => progressPointsForSession(session, selectedMetricKey));
+  const summaryMetricKey = selectedMetricKey ?? preferredMetric;
+  const summaryPoints = summaryMetricKey ? filteredSessions.flatMap((session) => progressPointsForSession(session, summaryMetricKey)) : [];
   const progressSummary = summarizeProgressPoints(progressPoints);
+  const latestSummaryPoint = latestProgressPoint(summaryPoints);
+  const previousChange = latestComparableChange(summaryPoints);
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? historySessions[0];
-  const traceOnlyCount = filteredSessions.filter((session) => session.mode === "unsupported_trace").length;
-  const latestSession = sessions[0];
+  const latestSession = filteredSessions[0];
   const latestAverage = latestSession ? primaryAverageMetric(latestSession) : undefined;
   const latestPeak = latestSession ? metricValue(latestSession, "peakForceN") : undefined;
   const latestFilteredSession = filteredSessions[0];
-  const latestFilteredAverage = latestFilteredSession ? primaryAverageMetric(latestFilteredSession) : undefined;
-  const personalBest = bestProgressPoint(progressPoints);
+  const personalBest = bestProgressPoint(summaryPoints);
   const weeklyCount = countSessionsThisWeek(sessions);
   const weeklyPercent = Math.min(100, Math.round((weeklyCount / weeklyTarget) * 100));
   const pageHeading = pageHeadingForTab(activeTab);
@@ -592,11 +595,9 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
               </select>
             </label>
             <label>Mode
-              <select value={modeFilter} onChange={(event) => setModeFilter(event.currentTarget.value as "all" | TrackerMode)}>
-                <option value="all">All</option>
+              <select value={modeFilter} onChange={(event) => setModeFilter(event.currentTarget.value as ChartMode)}>
                 <option value="endurance">Endurance</option>
                 <option value="repeater">Repeater</option>
-                <option value="unsupported_trace">Trace only</option>
               </select>
             </label>
             <label>Grip
@@ -617,11 +618,16 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
             )}
           </details>
         )}
-        <div className="stat-grid stat-grid-compact">
+        <div className="stat-grid stat-grid-compact progress-stat-grid">
           <div className="stat-card">
             <span>Latest</span>
-            <strong>{latestFilteredAverage ? formatMetricValue(latestFilteredAverage) : "--"}</strong>
-            <small>{latestFilteredSession ? formatCompactDate(latestFilteredSession.testedAt) : "No matching data"}</small>
+            <strong>{latestSummaryPoint ? formatMetricValue(latestSummaryPoint) : "--"}</strong>
+            <small>{latestSummaryPoint ? `${progressMetricLabel(latestSummaryPoint.metricKey, latestSummaryPoint.mode)} on ${formatCompactDate(latestSummaryPoint.testedAt)}` : "No matching data"}</small>
+          </div>
+          <div className="stat-card">
+            <span>Since previous</span>
+            <strong>{previousChange ? formatChange(previousChange.delta) : "--"}</strong>
+            <small>{previousChange ? `${formatChangePercent(previousChange.percent)} from ${formatCompactDate(previousChange.previous.testedAt)}` : latestFilteredSession ? "No previous matching session" : "No matching data"}</small>
           </div>
           <div className="stat-card">
             <span>Best plotted</span>
@@ -630,7 +636,6 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
           </div>
         </div>
         <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} />
-        {traceOnlyCount > 0 && <p className="notice">{traceOnlyCount} saved session{traceOnlyCount === 1 ? "" : "s"} are trace-only for {effectiveSelectedMetric === "all" ? "these metrics" : "this metric"}.</p>}
         {reimportNoticeCount > 0 && <p className="notice">{reimportNoticeCount} saved session{reimportNoticeCount === 1 ? "" : "s"} need re-import before all trace-derived force metrics can be derived.</p>}
       </section>}
 
@@ -1132,26 +1137,24 @@ function availableMetricText(parsed?: ParsedTrackerCsv) {
   return available.map((metric) => metric.label).join(", ");
 }
 
-function metricOptionsForMode(mode: "all" | TrackerMode): MetricOption[] {
+function metricOptionsForMode(mode: ChartMode): MetricOption[] {
   return metricOptions
-    .filter((option) => mode === "all" || !option.mode || option.mode === mode)
-    .map((option) => ({ ...option, label: progressMetricLabel(option.key, mode === "all" ? undefined : mode) }));
+    .filter((option) => !option.mode || option.mode === mode)
+    .map((option) => ({ ...option, label: progressMetricLabel(option.key, mode) }));
 }
 
 function preferredMetricForMode(
-  mode: "all" | TrackerMode,
+  mode: ChartMode,
   availability: ReadonlyMap<TrackerMetricKey, { count: number; reason?: string }>,
 ): TrackerMetricKey | undefined {
   const preferredOrder: TrackerMetricKey[] = mode === "endurance"
     ? ["enduranceAverageForceN", "peakForceN", "criticalForceN"]
-    : mode === "repeater"
-      ? ["repeaterAverageForceN", "peakForceN"]
-      : ["repeaterAverageForceN", "peakForceN", "enduranceAverageForceN", "criticalForceN"];
+    : ["repeaterAverageForceN", "peakForceN"];
 
   return preferredOrder.find((key) => availability.get(key)?.count);
 }
 
-function progressMetricLabel(key: TrackerMetricKey, mode?: "all" | TrackerMode) {
+function progressMetricLabel(key: TrackerMetricKey, mode?: TrackerMode) {
   if (key === "criticalForceN") return "Critical force";
   if (key === "enduranceAverageForceN") return "Endurance average force";
   if (key === "repeaterAverageForceN") return "Repeater average force";
@@ -1184,6 +1187,43 @@ function bestProgressPoint(points: readonly ProgressPoint[]) {
     if (!best || point.value > best.value) return point;
     return best;
   }, undefined);
+}
+
+function latestProgressPoint(points: readonly ProgressPoint[]) {
+  return [...points].sort((a, b) => Date.parse(b.testedAt) - Date.parse(a.testedAt))[0];
+}
+
+function latestComparableChange(points: readonly ProgressPoint[]) {
+  const latest = latestProgressPoint(points);
+  if (!latest) return undefined;
+  const previous = [...points]
+    .filter((point) =>
+      point.sessionId !== latest.sessionId &&
+      point.mode === latest.mode &&
+      point.grip === latest.grip &&
+      (point.hand ?? "") === (latest.hand ?? "") &&
+      point.metricKey === latest.metricKey &&
+      Date.parse(point.testedAt) <= Date.parse(latest.testedAt))
+    .sort((a, b) => Date.parse(b.testedAt) - Date.parse(a.testedAt))[0];
+  if (!previous) return undefined;
+  const delta = latest.value - previous.value;
+  return {
+    latest,
+    previous,
+    delta,
+    percent: previous.value === 0 ? undefined : delta / previous.value,
+  };
+}
+
+function formatChange(deltaN: number) {
+  const sign = deltaN > 0 ? "+" : "";
+  return `${sign}${formatMetricValue({ key: "peakForceN", value: deltaN, unit: "N" })}`;
+}
+
+function formatChangePercent(value: number | undefined) {
+  if (value === undefined) return "change";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${Math.round(value * 100)}%`;
 }
 
 function readWeeklyTarget() {

@@ -324,6 +324,10 @@ label,
   min-width: 0;
 }
 
+.progress-stat-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .stat-card {
   border-left: 3px solid var(--primary-soft);
   min-width: 0;
@@ -954,7 +958,8 @@ textarea {
   }
 
   .auth-actions,
-  .stat-grid {
+  .stat-grid,
+  .progress-stat-grid {
     grid-template-columns: 1fr;
   }
 
