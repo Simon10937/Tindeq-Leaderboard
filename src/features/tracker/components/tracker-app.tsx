@@ -462,6 +462,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
             ))}
           </div>
         </div>
+        <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} />
         <div className="plot-chip-area">
           <div className="chip-list plot-chip-list" aria-label="Metric">
             <button
@@ -495,7 +496,6 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
             ))}
           </div>
         </div>
-        <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} />
         {reimportNoticeCount > 0 && <p className="notice">{reimportNoticeCount} saved session{reimportNoticeCount === 1 ? "" : "s"} need re-import before all trace-derived force metrics can be derived.</p>}
         <div className="stat-grid stat-grid-compact progress-stat-grid">
           <div className="stat-card">

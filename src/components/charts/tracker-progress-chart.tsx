@@ -1,5 +1,8 @@
 import type { ProgressPoint, TrackerMetricKey, TrackerMode } from "@/features/tracker/types";
-import { CHART_DASHES as DASHES, CHART_HEIGHT as HEIGHT, CHART_WIDTH as WIDTH, dashLabel, forceNToKgf, formatCompactDate, formatMetricValue, formatProgressMetricLabel, formatScore, scale } from "./chart-utils";
+import { CHART_DASHES as DASHES, dashLabel, forceNToKgf, formatCompactDate, formatMetricValue, formatProgressMetricLabel, formatScore, scale } from "./chart-utils";
+
+const WIDTH = 760;
+const HEIGHT = 420;
 
 type Props = Readonly<{
   points: readonly ProgressPoint[];

@@ -330,14 +330,12 @@ label,
 
 .progress-focus-panel {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .progress-heading {
   align-items: end;
-  border-bottom: 1px solid var(--line);
   gap: 10px;
-  padding-bottom: 10px;
 }
 
 .mode-chip-row,
@@ -362,6 +360,7 @@ label,
 .plot-chip-area {
   display: grid;
   gap: 6px;
+  margin-top: -2px;
   min-width: 0;
 }
 
@@ -372,11 +371,20 @@ label,
 
 .plot-chip-list .chip,
 .mode-chip-row .chip {
+  background: rgba(255, 255, 255, 0.62);
+  border-color: rgba(79, 94, 84, 0.28);
+  color: rgba(24, 32, 38, 0.74);
   flex: 0 0 auto;
-  font-size: 0.72rem;
-  min-height: 30px;
-  padding: 5px 10px;
+  font-size: 0.68rem;
+  min-height: 28px;
+  padding: 4px 9px;
   text-transform: none;
+}
+
+.progress-focus-panel .chip-selected {
+  background: rgba(22, 56, 38, 0.1);
+  border-color: rgba(22, 56, 38, 0.32);
+  color: var(--primary);
 }
 
 .progress-focus-panel .tracker-chart svg {
