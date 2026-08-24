@@ -32,12 +32,13 @@ type SelectedMetric = "all" | TrackerMetricKey;
 type AvailableMetric = Extract<TrackerSession["metrics"][number], { available: true }>;
 type ActiveTab = "progress" | "import" | "history";
 type SessionEditState = Readonly<{ sessionId: string; context: ImportContext }>;
+type MetricOption = Readonly<{ key: TrackerMetricKey; label: string; mode?: TrackerMode }>;
 
-const metricOptions: { key: TrackerMetricKey; label: string; mode?: TrackerMode }[] = [
+const metricOptions: MetricOption[] = [
   { key: "criticalForceN", label: "Critical force", mode: "endurance" },
   { key: "enduranceAverageForceN", label: "Endurance average force", mode: "endurance" },
   { key: "repeaterAverageForceN", label: "Repeater average force", mode: "repeater" },
-  { key: "peakForceN", label: "Peak force" },
+  { key: "peakForceN", label: "Max force" },
 ];
 
 const gripPresets = ["20mm edge", "15mm edge", "half crimp", "rehab half crimp", "open hand", "pinch", "jug"];
@@ -52,7 +53,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const [sessions, setSessions] = useState<TrackerSession[]>([]);
   const [drafts, setDrafts] = useState<DraftImport[]>([]);
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => typeof window === "undefined" ? initialTab : readActiveTabFromLocation(initialTab));
-  const [selectedMetric, setSelectedMetric] = useState<SelectedMetric>("all");
+  const [selectedMetric, setSelectedMetric] = useState<SelectedMetric>("repeaterAverageForceN");
   const [modeFilter, setModeFilter] = useState<"all" | TrackerMode>("all");
   const [gripFilter, setGripFilter] = useState("all");
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
@@ -361,21 +362,24 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const filteredSessions = sessions.filter((session) =>
     (modeFilter === "all" || session.mode === modeFilter) &&
     (gripFilter === "all" || session.grip === gripFilter));
+  const historySessions = sessions;
   const metricAvailability = useMemo(() => summarizeMetricAvailability(filteredSessions), [filteredSessions]);
-  const availableMetricOptions = metricOptions.filter((option) => metricAvailability.get(option.key)?.count);
-  const unavailableMetricOptions = metricOptions.filter((option) => !metricAvailability.get(option.key)?.count);
+  const modeMetricOptions = metricOptionsForMode(modeFilter);
+  const availableMetricOptions = modeMetricOptions.filter((option) => metricAvailability.get(option.key)?.count);
+  const unavailableMetricOptions = modeMetricOptions.filter((option) => !metricAvailability.get(option.key)?.count);
 
-  const effectiveSelectedMetric = selectedMetric !== "all" && !metricAvailability.get(selectedMetric)?.count ? "all" : selectedMetric;
+  const preferredMetric = preferredMetricForMode(modeFilter, metricAvailability);
+  const effectiveSelectedMetric = selectedMetric !== "all" && !metricAvailability.get(selectedMetric)?.count ? preferredMetric ?? "all" : selectedMetric;
   const selectedMetricKey = effectiveSelectedMetric === "all" ? undefined : effectiveSelectedMetric;
   const progressPoints = filteredSessions.flatMap((session) => progressPointsForSession(session, selectedMetricKey));
   const progressSummary = summarizeProgressPoints(progressPoints);
-  const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? filteredSessions[0];
-  const traceOnlyCount = filteredSessions.length - new Set(progressPoints.map((point) => point.sessionId)).size;
+  const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? historySessions[0];
+  const traceOnlyCount = filteredSessions.filter((session) => session.mode === "unsupported_trace").length;
   const latestSession = sessions[0];
-  const latestAverage = latestSession ? metricValue(latestSession, "repeaterAverageForceN") ?? metricValue(latestSession, "criticalForceN") : undefined;
+  const latestAverage = latestSession ? primaryAverageMetric(latestSession) : undefined;
   const latestPeak = latestSession ? metricValue(latestSession, "peakForceN") : undefined;
   const latestFilteredSession = filteredSessions[0];
-  const latestFilteredAverage = latestFilteredSession ? metricValue(latestFilteredSession, "repeaterAverageForceN") ?? metricValue(latestFilteredSession, "criticalForceN") : undefined;
+  const latestFilteredAverage = latestFilteredSession ? primaryAverageMetric(latestFilteredSession) : undefined;
   const personalBest = bestProgressPoint(progressPoints);
   const weeklyCount = countSessionsThisWeek(sessions);
   const weeklyPercent = Math.min(100, Math.round((weeklyCount / weeklyTarget) * 100));
@@ -462,7 +466,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
               <strong>{latestAverage ? formatMetricValue(latestAverage) : "--"}</strong>
             </div>
             <div className="stat-card">
-              <span>{latestPeak ? latestPeak.label : "Peak load"}</span>
+              <span>{latestPeak ? progressMetricLabel(latestPeak.key, latestSession.mode) : "Peak load"}</span>
               <strong>{latestPeak ? formatMetricValue(latestPeak) : "--"}</strong>
             </div>
           </div>
@@ -591,12 +595,17 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
             </label>
           </div>
         </div>
-        {unavailableMetricOptions.length > 0 && (
-          <p className="metric-help">
-            Not charting yet: {unavailableMetricOptions.map((option) => `${option.label} (${metricAvailability.get(option.key)?.reason ?? "no matching sessions"})`).join("; ")}.
-          </p>
+        {(unavailableMetricOptions.length > 0 || progressSummary) && (
+          <details className="metric-details">
+            <summary>Chart details</summary>
+            {progressSummary && <p className="progress-summary">{progressSummary}</p>}
+            {unavailableMetricOptions.length > 0 && (
+              <p className="metric-help">
+                Not charting yet: {unavailableMetricOptions.map((option) => `${option.label} (${metricAvailability.get(option.key)?.reason ?? "no matching sessions"})`).join("; ")}.
+              </p>
+            )}
+          </details>
         )}
-        {progressSummary && <p className="progress-summary">{progressSummary}</p>}
         <div className="stat-grid stat-grid-compact">
           <div className="stat-card">
             <span>Latest</span>
@@ -606,7 +615,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
           <div className="stat-card">
             <span>Best plotted</span>
             <strong>{personalBest ? formatMetricValue(personalBest) : "--"}</strong>
-            <small>{personalBest ? formatProgressMetricLabel(personalBest) : "No chart points"}</small>
+            <small>{personalBest ? progressMetricLabel(personalBest.metricKey, personalBest.mode) : "No chart points"}</small>
           </div>
         </div>
         <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} />
@@ -620,9 +629,9 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
             <p className="eyebrow">History</p>
             <h2>Sessions</h2>
           </div>
-          {filteredSessions.length === 0 ? <p>No saved sessions match these filters.</p> : (
+          {historySessions.length === 0 ? <p>No saved sessions yet.</p> : (
             <ul className="session-list">
-              {filteredSessions.map((session) => (
+              {historySessions.map((session) => (
                 <li key={session.id}>
                   <button type="button" onClick={() => setSelectedSessionId(session.id)} className={selectedSession?.id === session.id ? "session-select selected-session" : "session-select"}>
                     <span className="session-date">{formatCompactDate(session.testedAt)}</span>
@@ -1106,12 +1115,46 @@ function availableMetricText(parsed?: ParsedTrackerCsv) {
   return available.map((metric) => metric.label).join(", ");
 }
 
+function metricOptionsForMode(mode: "all" | TrackerMode): MetricOption[] {
+  return metricOptions
+    .filter((option) => mode === "all" || !option.mode || option.mode === mode)
+    .map((option) => ({ ...option, label: progressMetricLabel(option.key, mode === "all" ? undefined : mode) }));
+}
+
+function preferredMetricForMode(
+  mode: "all" | TrackerMode,
+  availability: ReadonlyMap<TrackerMetricKey, { count: number; reason?: string }>,
+): TrackerMetricKey | undefined {
+  const preferredOrder: TrackerMetricKey[] = mode === "endurance"
+    ? ["enduranceAverageForceN", "peakForceN", "criticalForceN"]
+    : mode === "repeater"
+      ? ["repeaterAverageForceN", "peakForceN"]
+      : ["repeaterAverageForceN", "peakForceN", "enduranceAverageForceN", "criticalForceN"];
+
+  return preferredOrder.find((key) => availability.get(key)?.count);
+}
+
+function progressMetricLabel(key: TrackerMetricKey, mode?: "all" | TrackerMode) {
+  if (key === "criticalForceN") return "Critical force";
+  if (key === "enduranceAverageForceN") return "Endurance average force";
+  if (key === "repeaterAverageForceN") return "Repeater average force";
+  if (mode === "endurance") return "Endurance max force";
+  if (mode === "repeater") return "Repeater max force";
+  return "Max force";
+}
+
+function primaryAverageMetric(session: TrackerSession) {
+  return metricValue(session, "repeaterAverageForceN") ??
+    metricValue(session, "enduranceAverageForceN") ??
+    metricValue(session, "criticalForceN");
+}
+
 function metricValue(session: TrackerSession, key: TrackerMetricKey): AvailableMetric | undefined {
   return session.metrics.find((metric): metric is AvailableMetric => metric.key === key && metric.available);
 }
 
 function sessionMetricLine(session: TrackerSession) {
-  const average = metricValue(session, "repeaterAverageForceN") ?? metricValue(session, "criticalForceN");
+  const average = primaryAverageMetric(session);
   const peak = metricValue(session, "peakForceN");
   if (average && peak) return `${formatMetricValue(average)} avg / ${formatMetricValue(peak)} peak`;
   if (average) return `${formatMetricValue(average)} ${formatProgressMetricLabel(average).toLowerCase()}`;

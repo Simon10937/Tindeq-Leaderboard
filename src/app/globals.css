@@ -693,6 +693,27 @@ textarea {
   margin-bottom: 0;
 }
 
+.metric-details,
+.chart-details {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  min-width: 0;
+  padding-top: 10px;
+}
+
+.metric-details summary,
+.chart-details summary {
+  color: var(--primary);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.metric-details p {
+  margin: 0;
+}
+
 .progress-summary {
   color: var(--ink) !important;
   font-weight: 800;

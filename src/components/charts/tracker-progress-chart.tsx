@@ -58,26 +58,29 @@ export function TrackerProgressChart({ points, selectedMetric }: Props) {
           );
         })}
       </svg>
-      <ul className="chart-key" aria-label="Progress chart series">
-        {series.map((item, index) => <li key={item.key}><strong>{item.label}</strong> - {dashLabel(index)}</li>)}
-      </ul>
-      <div className="table-scroll">
-        <table>
-          <caption>Progress data</caption>
-          <thead><tr><th scope="col">Date</th><th scope="col">Test</th><th scope="col">Grip</th><th scope="col">Metric</th><th scope="col">Value</th></tr></thead>
-          <tbody>
-            {visible.map((point) => (
-              <tr key={`${point.sessionId}-${point.metricKey}`}>
-                <td>{formatCompactDate(point.testedAt)}</td>
-                <td>{modeLabel(point.mode)}</td>
-                <td>{point.hand ? `${point.grip} (${point.hand})` : point.grip}</td>
-                <td>{formatProgressMetricLabel(point)}</td>
-                <td>{formatMetricValue(point)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <details className="chart-details">
+        <summary>Show data</summary>
+        <ul className="chart-key" aria-label="Progress chart series">
+          {series.map((item, index) => <li key={item.key}><strong>{item.label}</strong> - {dashLabel(index)}</li>)}
+        </ul>
+        <div className="table-scroll">
+          <table>
+            <caption>Progress data</caption>
+            <thead><tr><th scope="col">Date</th><th scope="col">Test</th><th scope="col">Grip</th><th scope="col">Metric</th><th scope="col">Value</th></tr></thead>
+            <tbody>
+              {visible.map((point) => (
+                <tr key={`${point.sessionId}-${point.metricKey}`}>
+                  <td>{formatCompactDate(point.testedAt)}</td>
+                  <td>{modeLabel(point.mode)}</td>
+                  <td>{point.hand ? `${point.grip} (${point.hand})` : point.grip}</td>
+                  <td>{chartMetricLabel(point)}</td>
+                  <td>{formatMetricValue(point)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </figure>
   );
 }
@@ -86,7 +89,7 @@ function groupProgressSeries(points: readonly ProgressPoint[]) {
   const grouped = new Map<string, { key: string; label: string; points: ProgressPoint[] }>();
   for (const point of points) {
     const key = [point.mode, point.grip, point.hand ?? "any", point.metricKey].join(":");
-    const label = `${modeLabel(point.mode)} - ${point.grip}${point.hand ? ` - ${point.hand}` : ""} - ${formatProgressMetricLabel(point)}`;
+    const label = `${modeLabel(point.mode)} - ${point.grip}${point.hand ? ` - ${point.hand}` : ""} - ${chartMetricLabel(point)}`;
     const item = grouped.get(key) ?? { key, label, points: [] };
     item.points.push(point);
     grouped.set(key, item);
@@ -116,4 +119,9 @@ function modeLabel(mode: TrackerMode) {
   if (mode === "endurance") return "Endurance";
   if (mode === "repeater") return "Repeater";
   return "Trace only";
+}
+
+function chartMetricLabel(point: ProgressPoint) {
+  if (point.metricKey === "peakForceN") return "Max force";
+  return formatProgressMetricLabel(point);
 }

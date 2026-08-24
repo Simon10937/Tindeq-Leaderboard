@@ -9,11 +9,12 @@ const points: ProgressPoint[] = [
 ];
 
 describe("TrackerProgressChart", () => {
-  it("renders distinct test and grip series with a data table", () => {
+  it("renders a sparse chart with detail hidden behind a disclosure", () => {
     const markup = renderToStaticMarkup(<TrackerProgressChart points={points} />);
 
     expect(markup).toContain("Endurance - 20mm");
     expect(markup).toContain("Repeater - jug");
+    expect(markup).toContain("<details class=\"chart-details\"><summary>Show data</summary>");
     expect(markup).toContain("Progress data");
   });
 
@@ -30,7 +31,7 @@ describe("TrackerProgressChart", () => {
     ]} />);
 
     expect(markup).toContain("Repeater - half crimp - Estimated avg repeater force");
-    expect(markup).toContain("Repeater - half crimp - Peak force");
+    expect(markup).toContain("Repeater - half crimp - Max force");
   });
 
   it("renders kg labels, compact dates, and axis titles", () => {
