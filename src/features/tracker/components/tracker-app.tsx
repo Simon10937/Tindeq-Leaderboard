@@ -364,23 +364,28 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
     setStatus("Session updated.");
   }
 
-  const grips = useMemo(() => ["all", ...Array.from(new Set([...gripPresets, ...sessions.map((session) => session.grip)])).sort()], [sessions]);
   const tagSuggestions = useMemo(() => Array.from(new Set([
     ...tagPresets,
     ...sessions.flatMap((session) => normalizeTags(session.tags)),
     ...drafts.flatMap((draft) => normalizeTags(draft.tags)),
   ])).sort(), [drafts, sessions]);
   const visibleImportDrafts = drafts;
+  const availableModes = useMemo(() => chartModesForSessions(sessions), [sessions]);
+  const effectiveModeFilter = availableModes.includes(modeFilter) ? modeFilter : availableModes[0];
+  const gripOptions = useMemo(() => ["all", ...Array.from(new Set(sessions
+    .filter((session) => session.mode === effectiveModeFilter)
+    .map((session) => session.grip))).sort()], [effectiveModeFilter, sessions]);
+
   const filteredSessions = sessions.filter((session) =>
-    session.mode === modeFilter &&
+    session.mode === effectiveModeFilter &&
     (gripFilter === "all" || session.grip === gripFilter));
   const historySessions = sessions;
   const metricAvailability = useMemo(() => summarizeMetricAvailability(filteredSessions), [filteredSessions]);
-  const modeMetricOptions = metricOptionsForMode(modeFilter);
+  const modeMetricOptions = metricOptionsForMode(effectiveModeFilter);
   const availableMetricOptions = modeMetricOptions.filter((option) => metricAvailability.get(option.key)?.count);
   const unavailableMetricOptions = modeMetricOptions.filter((option) => !metricAvailability.get(option.key)?.count);
 
-  const preferredMetric = preferredMetricForMode(modeFilter, metricAvailability);
+  const preferredMetric = preferredMetricForMode(effectiveModeFilter, metricAvailability);
   const effectiveSelectedMetric = selectedMetric !== "all" && !metricAvailability.get(selectedMetric)?.count ? preferredMetric ?? "all" : selectedMetric;
   const selectedMetricKey = effectiveSelectedMetric === "all" ? undefined : effectiveSelectedMetric;
   const progressPoints = filteredSessions.flatMap((session) => progressPointsForSession(session, selectedMetricKey));
@@ -421,18 +426,131 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
             <h1 id="tracker-title">{pageHeading.title}</h1>
             <p className="lede">{pageHeading.description}</p>
           </div>
-          <div className="session-counter" aria-label={`${sessions.length} saved sessions`}>
+          {activeTab !== "progress" && <div className="session-counter" aria-label={`${sessions.length} saved sessions`}>
             <span>{sessions.length}</span>
             <small>saved session{sessions.length === 1 ? "" : "s"}</small>
-          </div>
+          </div>}
         </section>
 
-        {status && (
+        {status && activeTab !== "progress" && (
           <section className="tracker-panel status-panel" role="status">
             <p>{status}</p>
             <button className="text-button" type="button" onClick={() => setStatus(undefined)}>Dismiss</button>
           </section>
         )}
+
+      {activeTab === "progress" && <section className="tracker-panel progress-panel progress-focus-panel" aria-labelledby="progress-title">
+        <div className="panel-heading progress-heading">
+          <div>
+            <p className="eyebrow">Progress</p>
+            <h2 id="progress-title">Over time</h2>
+          </div>
+          <div className="mode-chip-row" aria-label="Test mode">
+            {availableModes.map((mode) => (
+              <button
+                className={effectiveModeFilter === mode ? "chip chip-selected" : "chip"}
+                key={mode}
+                type="button"
+                onClick={() => {
+                  setModeFilter(mode);
+                  setSelectedMetric("all");
+                  setGripFilter("all");
+                }}
+              >
+                {modeLabel(mode)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="plot-chip-area">
+          <div className="chip-list plot-chip-list" aria-label="Metric">
+            <button
+              className={effectiveSelectedMetric === "all" ? "chip chip-selected" : "chip"}
+              type="button"
+              onClick={() => setSelectedMetric("all")}
+            >
+              All chartable
+            </button>
+            {availableMetricOptions.map((option) => (
+              <button
+                className={effectiveSelectedMetric === option.key ? "chip chip-selected" : "chip"}
+                key={option.key}
+                type="button"
+                onClick={() => setSelectedMetric(option.key)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="chip-list plot-chip-list" aria-label="Grip">
+            {gripOptions.map((grip) => (
+              <button
+                className={gripFilter === grip ? "chip chip-selected" : "chip"}
+                key={grip}
+                type="button"
+                onClick={() => setGripFilter(grip)}
+              >
+                {grip === "all" ? "All grips" : grip}
+              </button>
+            ))}
+          </div>
+        </div>
+        <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} />
+        {reimportNoticeCount > 0 && <p className="notice">{reimportNoticeCount} saved session{reimportNoticeCount === 1 ? "" : "s"} need re-import before all trace-derived force metrics can be derived.</p>}
+        <div className="stat-grid stat-grid-compact progress-stat-grid">
+          <div className="stat-card">
+            <span>Latest</span>
+            <strong>{latestSummaryPoint ? formatMetricValue(latestSummaryPoint) : "--"}</strong>
+            <small>{latestSummaryPoint ? `${progressMetricLabel(latestSummaryPoint.metricKey, latestSummaryPoint.mode)} on ${formatCompactDate(latestSummaryPoint.testedAt)}` : "No matching data"}</small>
+          </div>
+          <div className="stat-card">
+            <span>Since previous</span>
+            <strong>{previousChange ? formatChange(previousChange.delta) : "--"}</strong>
+            <small>{previousChange ? `${formatChangePercent(previousChange.percent)} from ${formatCompactDate(previousChange.previous.testedAt)}` : latestFilteredSession ? "No previous matching session" : "No matching data"}</small>
+          </div>
+          <div className="stat-card">
+            <span>Personal best</span>
+            <strong>{personalBest ? formatMetricValue(personalBest) : "--"}</strong>
+            <small>{personalBest ? progressMetricLabel(personalBest.metricKey, personalBest.mode) : "No chart points"}</small>
+          </div>
+        </div>
+        {(unavailableMetricOptions.length > 0 || progressSummary) && (
+          <details className="metric-details">
+            <summary>Chart details</summary>
+            {progressSummary && <p className="progress-summary">{progressSummary}</p>}
+            {unavailableMetricOptions.length > 0 && (
+              <p className="metric-help">
+                Not charting yet: {unavailableMetricOptions.map((option) => `${option.label} (${metricAvailability.get(option.key)?.reason ?? "no matching sessions"})`).join("; ")}.
+              </p>
+            )}
+          </details>
+        )}
+      </section>}
+
+        {status && activeTab === "progress" && (
+          <section className="tracker-panel status-panel" role="status">
+            <p>{status}</p>
+            <button className="text-button" type="button" onClick={() => setStatus(undefined)}>Dismiss</button>
+          </section>
+        )}
+
+        {activeTab === "progress" && <section className="tracker-panel latest-panel" aria-labelledby="latest-title">
+          <div className="section-heading">
+            <p className="eyebrow">Latest activity</p>
+            <h2 id="latest-title">{latestSession ? `${modeLabel(latestSession.mode)} ${formatCompactDate(latestSession.testedAt)}` : "No sessions yet"}</h2>
+            {latestSession && <p>{latestSession.grip}{latestSession.hand ? ` - ${latestSession.hand}` : ""}</p>}
+          </div>
+          <div className="stat-grid">
+            <div className="stat-card">
+              <span>{latestAverage ? formatProgressMetricLabel(latestAverage) : "Primary load"}</span>
+              <strong>{latestAverage ? formatMetricValue(latestAverage) : "--"}</strong>
+            </div>
+            <div className="stat-card">
+              <span>{latestPeak ? progressMetricLabel(latestPeak.key, latestSession.mode) : "Peak load"}</span>
+              <strong>{latestPeak ? formatMetricValue(latestPeak) : "--"}</strong>
+            </div>
+          </div>
+        </section>}
 
         {activeTab === "progress" && (
           <section className="tracker-panel weekly-target" aria-labelledby="weekly-target-title">
@@ -466,24 +584,6 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
               <button className="button" type="button" onClick={() => void requestMagicLink()}>Email sign-in link</button>
             </div>
           )}
-        </section>}
-
-        {activeTab === "progress" && <section className="tracker-panel latest-panel" aria-labelledby="latest-title">
-          <div className="section-heading">
-            <p className="eyebrow">Latest activity</p>
-            <h2 id="latest-title">{latestSession ? `${modeLabel(latestSession.mode)} ${formatCompactDate(latestSession.testedAt)}` : "No sessions yet"}</h2>
-            {latestSession && <p>{latestSession.grip}{latestSession.hand ? ` - ${latestSession.hand}` : ""}</p>}
-          </div>
-          <div className="stat-grid">
-            <div className="stat-card">
-              <span>{latestAverage ? formatProgressMetricLabel(latestAverage) : "Primary load"}</span>
-              <strong>{latestAverage ? formatMetricValue(latestAverage) : "--"}</strong>
-            </div>
-            <div className="stat-card">
-              <span>{latestPeak ? progressMetricLabel(latestPeak.key, latestSession.mode) : "Peak load"}</span>
-              <strong>{latestPeak ? formatMetricValue(latestPeak) : "--"}</strong>
-            </div>
-          </div>
         </section>}
 
       {activeTab === "import" && <section className="tracker-panel import-panel" aria-labelledby="import-title">
@@ -580,64 +680,6 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
           ))}
         </section>
       )}
-
-      {activeTab === "progress" && <section className="tracker-panel progress-panel" aria-labelledby="progress-title">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Progress</p>
-            <h2 id="progress-title">Over time</h2>
-          </div>
-          <div className="filters">
-            <label>Metric
-              <select value={effectiveSelectedMetric} onChange={(event) => setSelectedMetric(event.currentTarget.value as SelectedMetric)}>
-                <option value="all">All chartable</option>
-                {availableMetricOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
-              </select>
-            </label>
-            <label>Mode
-              <select value={modeFilter} onChange={(event) => setModeFilter(event.currentTarget.value as ChartMode)}>
-                <option value="endurance">Endurance</option>
-                <option value="repeater">Repeater</option>
-              </select>
-            </label>
-            <label>Grip
-              <select value={gripFilter} onChange={(event) => setGripFilter(event.currentTarget.value)}>
-                {grips.map((grip) => <option key={grip} value={grip}>{grip === "all" ? "All" : grip}</option>)}
-              </select>
-            </label>
-          </div>
-        </div>
-        {(unavailableMetricOptions.length > 0 || progressSummary) && (
-          <details className="metric-details">
-            <summary>Chart details</summary>
-            {progressSummary && <p className="progress-summary">{progressSummary}</p>}
-            {unavailableMetricOptions.length > 0 && (
-              <p className="metric-help">
-                Not charting yet: {unavailableMetricOptions.map((option) => `${option.label} (${metricAvailability.get(option.key)?.reason ?? "no matching sessions"})`).join("; ")}.
-              </p>
-            )}
-          </details>
-        )}
-        <div className="stat-grid stat-grid-compact progress-stat-grid">
-          <div className="stat-card">
-            <span>Latest</span>
-            <strong>{latestSummaryPoint ? formatMetricValue(latestSummaryPoint) : "--"}</strong>
-            <small>{latestSummaryPoint ? `${progressMetricLabel(latestSummaryPoint.metricKey, latestSummaryPoint.mode)} on ${formatCompactDate(latestSummaryPoint.testedAt)}` : "No matching data"}</small>
-          </div>
-          <div className="stat-card">
-            <span>Since previous</span>
-            <strong>{previousChange ? formatChange(previousChange.delta) : "--"}</strong>
-            <small>{previousChange ? `${formatChangePercent(previousChange.percent)} from ${formatCompactDate(previousChange.previous.testedAt)}` : latestFilteredSession ? "No previous matching session" : "No matching data"}</small>
-          </div>
-          <div className="stat-card">
-            <span>Best plotted</span>
-            <strong>{personalBest ? formatMetricValue(personalBest) : "--"}</strong>
-            <small>{personalBest ? progressMetricLabel(personalBest.metricKey, personalBest.mode) : "No chart points"}</small>
-          </div>
-        </div>
-        <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} />
-        {reimportNoticeCount > 0 && <p className="notice">{reimportNoticeCount} saved session{reimportNoticeCount === 1 ? "" : "s"} need re-import before all trace-derived force metrics can be derived.</p>}
-      </section>}
 
       {activeTab === "history" && <section className="tracker-grid" aria-label="Saved sessions">
         <div className="tracker-panel history-panel">
@@ -1114,6 +1156,12 @@ function modeLabel(mode?: TrackerMode) {
   if (mode === "repeater") return "Repeater";
   if (mode === "unsupported_trace") return "Trace only";
   return "Invalid";
+}
+
+function chartModesForSessions(sessions: readonly TrackerSession[]): ChartMode[] {
+  const detected = new Set(sessions.flatMap((session) => session.mode === "endurance" || session.mode === "repeater" ? [session.mode] : []));
+  const ordered: ChartMode[] = ["repeater", "endurance"];
+  return ordered.filter((mode) => detected.size === 0 || detected.has(mode));
 }
 
 function authTitle(authState: TrackerAuthState) {

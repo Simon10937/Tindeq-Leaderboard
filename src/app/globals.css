@@ -328,6 +328,55 @@ label,
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.progress-focus-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.progress-heading {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+
+.mode-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.plot-chip-area {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.plot-chip-list {
+  flex-wrap: nowrap;
+  margin-left: -2px;
+  overflow-x: auto;
+  padding: 2px 2px 8px;
+  scrollbar-width: none;
+}
+
+.plot-chip-list::-webkit-scrollbar {
+  display: none;
+}
+
+.plot-chip-list .chip,
+.mode-chip-row .chip {
+  flex: 0 0 auto;
+  font-size: 0.82rem;
+  min-height: 38px;
+  text-transform: none;
+}
+
+.progress-focus-panel .tracker-chart svg {
+  min-height: 360px;
+}
+
 .stat-card {
   border-left: 3px solid var(--primary-soft);
   min-width: 0;
@@ -914,9 +963,14 @@ textarea {
   .auth-panel,
   .latest-panel,
   .import-panel,
+  .progress-heading,
   .panel-heading,
   .tracker-grid {
     grid-template-columns: 1fr;
+  }
+
+  .mode-chip-row {
+    justify-content: flex-start;
   }
 
   .session-counter {
@@ -934,6 +988,10 @@ textarea {
   .metric-list {
     grid-template-columns: 1fr;
     min-width: 0;
+  }
+
+  .progress-focus-panel .tracker-chart svg {
+    min-height: 330px;
   }
 }
 
@@ -955,6 +1013,17 @@ textarea {
 
   .tracker-welcome h1 {
     font-size: 1.72rem;
+  }
+
+  .progress-focus-panel {
+    gap: 14px;
+  }
+
+  .plot-chip-list {
+    margin-left: -12px;
+    margin-right: -12px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
   .auth-actions,
