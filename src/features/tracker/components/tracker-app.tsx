@@ -225,12 +225,19 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   async function requestMagicLink() {
     const supabase = supabaseRef.current;
     const email = authEmail.trim().toLowerCase();
-    if (!supabase || !email) return;
+    if (!supabase) {
+      setStatus("Private sync is not configured in this build. Use the Vercel preview or production site to sign in.");
+      return;
+    }
+    if (!email) {
+      setStatus("Enter your email address first.");
+      return;
+    }
 
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: buildMagicLinkRedirectUrl(window.location.origin, routeForTab(activeTab)),
         shouldCreateUser: false,
       },
     });
@@ -886,6 +893,12 @@ function tabFromPathname(pathname: string): ActiveTab | undefined {
 
 function routeForTab(tab: ActiveTab) {
   return tab === "progress" ? "/progress" : `/${tab}`;
+}
+
+export function buildMagicLinkRedirectUrl(origin: string, nextPath: string) {
+  const url = new URL("/auth/callback", origin);
+  url.searchParams.set("next", nextPath);
+  return url.toString();
 }
 
 function isActiveTab(tab: string | null): tab is ActiveTab {
