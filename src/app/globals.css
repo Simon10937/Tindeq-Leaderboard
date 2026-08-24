@@ -387,7 +387,7 @@ label,
   color: var(--primary);
 }
 
-.progress-focus-panel .tracker-chart svg {
+.progress-focus-panel .tracker-chart > svg {
   min-height: 0;
 }
 
@@ -820,7 +820,7 @@ textarea {
   font-weight: 800;
 }
 
-.tracker-chart svg {
+.tracker-chart > svg {
   background: var(--surface-low);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -831,10 +831,49 @@ textarea {
   width: 100%;
 }
 
-.tracker-chart circle {
+.tracker-chart > svg circle {
   fill: var(--surface);
   stroke: var(--primary);
   stroke-width: 2;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 12px;
+  list-style: none;
+  margin: -4px 0 0;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 0 0 3px;
+  scrollbar-width: none;
+}
+
+.chart-legend::-webkit-scrollbar {
+  display: none;
+}
+
+.chart-legend li {
+  align-items: center;
+  color: rgba(24, 32, 38, 0.72);
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  font-weight: 700;
+  gap: 6px;
+  max-width: min(320px, 78vw);
+  white-space: nowrap;
+}
+
+.chart-legend svg {
+  color: var(--primary);
+  flex: 0 0 34px;
+  height: 8px;
+  width: 34px;
+}
+
+.chart-legend span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .axis-label {

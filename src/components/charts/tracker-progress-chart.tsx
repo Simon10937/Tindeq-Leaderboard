@@ -29,6 +29,16 @@ export function TrackerProgressChart({ points, selectedMetric }: Props) {
   return (
     <figure className="tracker-chart" aria-labelledby="progress-chart-title">
       <figcaption id="progress-chart-title">Progress over time</figcaption>
+      <ul className="chart-legend" aria-label="Visible progress chart series">
+        {series.map((item, index) => (
+          <li key={item.key}>
+            <svg aria-hidden="true" focusable="false" viewBox="0 0 34 8">
+              <path d="M2 4H32" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2.5" strokeDasharray={DASHES[index % DASHES.length]} />
+            </svg>
+            <span>{item.label}</span>
+          </li>
+        ))}
+      </ul>
       <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-labelledby="progress-chart-title" aria-describedby="progress-chart-description">
         <desc id="progress-chart-description">Progress force values in kilograms over time. The same values are listed in the table after the chart.</desc>
         <line x1={chartPad.left} y1={HEIGHT - chartPad.bottom} x2={WIDTH - chartPad.right} y2={HEIGHT - chartPad.bottom} stroke="currentColor" />

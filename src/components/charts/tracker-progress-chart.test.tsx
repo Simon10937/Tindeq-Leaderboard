@@ -14,6 +14,7 @@ describe("TrackerProgressChart", () => {
 
     expect(markup).toContain("Endurance - 20mm");
     expect(markup).toContain("Repeater - jug");
+    expect(markup).toContain("class=\"chart-legend\"");
     expect(markup).toContain("<details class=\"chart-details\"><summary>Show data</summary>");
     expect(markup).toContain("Progress data");
   });
