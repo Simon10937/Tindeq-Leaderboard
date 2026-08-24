@@ -1,5 +1,5 @@
 import type { ProgressPoint, TrackerMetricKey, TrackerMode } from "@/features/tracker/types";
-import { CHART_DASHES as DASHES, CHART_HEIGHT as HEIGHT, CHART_PADDING as PAD, CHART_WIDTH as WIDTH, dashLabel, forceNToKgf, formatCompactDate, formatMetricValue, formatProgressMetricLabel, formatScore, scale } from "./chart-utils";
+import { CHART_DASHES as DASHES, CHART_HEIGHT as HEIGHT, CHART_WIDTH as WIDTH, dashLabel, forceNToKgf, formatCompactDate, formatMetricValue, formatProgressMetricLabel, formatScore, scale } from "./chart-utils";
 
 type Props = Readonly<{
   points: readonly ProgressPoint[];
@@ -17,8 +17,9 @@ export function TrackerProgressChart({ points, selectedMetric }: Props) {
   const timeMax = Math.max(...times);
   const valueMin = Math.min(...values);
   const valueMax = Math.max(...values);
-  const x = (time: number) => scale(time, timeMin, timeMax, PAD, WIDTH - PAD);
-  const y = (value: number) => scale(value, valueMin, valueMax, HEIGHT - PAD, PAD);
+  const chartPad = { left: 34, right: 22, top: 28, bottom: 34 };
+  const x = (time: number) => scale(time, timeMin, timeMax, chartPad.left, WIDTH - chartPad.right);
+  const y = (value: number) => scale(value, valueMin, valueMax, HEIGHT - chartPad.bottom, chartPad.top);
   const dateTicks = compactDateTicks(visible);
   const valueTicks = compactValueTicks(valueMin, valueMax);
 
@@ -27,20 +28,20 @@ export function TrackerProgressChart({ points, selectedMetric }: Props) {
       <figcaption id="progress-chart-title">Progress over time</figcaption>
       <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-labelledby="progress-chart-title" aria-describedby="progress-chart-description">
         <desc id="progress-chart-description">Progress force values in kilograms over time. The same values are listed in the table after the chart.</desc>
-        <line x1={PAD} y1={HEIGHT - PAD} x2={WIDTH - PAD} y2={HEIGHT - PAD} stroke="currentColor" />
-        <line x1={PAD} y1={PAD} x2={PAD} y2={HEIGHT - PAD} stroke="currentColor" />
-        <text className="axis-label" x={PAD} y={18}>Force (kg)</text>
-        <text className="axis-label" x={WIDTH - PAD} y={HEIGHT - 8} textAnchor="end">Date</text>
+        <line x1={chartPad.left} y1={HEIGHT - chartPad.bottom} x2={WIDTH - chartPad.right} y2={HEIGHT - chartPad.bottom} stroke="currentColor" />
+        <line x1={chartPad.left} y1={chartPad.top} x2={chartPad.left} y2={HEIGHT - chartPad.bottom} stroke="currentColor" />
+        <text className="axis-label" x={chartPad.left} y={16}>Force (kg)</text>
+        <text className="axis-label" x={WIDTH - chartPad.right} y={HEIGHT - 6} textAnchor="end">Date</text>
         {valueTicks.map((tick) => (
           <g key={`value-${tick}`}>
-            <line x1={PAD - 4} y1={y(tick)} x2={PAD} y2={y(tick)} stroke="currentColor" />
-            <text className="axis-tick" x={PAD - 8} y={y(tick) + 4} textAnchor="end">{formatScore(tick)}</text>
+            <line x1={chartPad.left - 4} y1={y(tick)} x2={chartPad.left} y2={y(tick)} stroke="currentColor" />
+            <text className="axis-tick" x={chartPad.left - 7} y={y(tick) + 4} textAnchor="end">{formatScore(tick)}</text>
           </g>
         ))}
         {dateTicks.map((point) => (
           <g key={`date-${point.testedAt}`}>
-            <line x1={x(Date.parse(point.testedAt))} y1={HEIGHT - PAD} x2={x(Date.parse(point.testedAt))} y2={HEIGHT - PAD + 4} stroke="currentColor" />
-            <text className="axis-tick" x={x(Date.parse(point.testedAt))} y={HEIGHT - PAD + 18} textAnchor="middle">{formatCompactDate(point.testedAt)}</text>
+            <line x1={x(Date.parse(point.testedAt))} y1={HEIGHT - chartPad.bottom} x2={x(Date.parse(point.testedAt))} y2={HEIGHT - chartPad.bottom + 4} stroke="currentColor" />
+            <text className="axis-tick" x={x(Date.parse(point.testedAt))} y={HEIGHT - chartPad.bottom + 17} textAnchor="middle">{formatCompactDate(point.testedAt)}</text>
           </g>
         ))}
         {series.map((item, index) => {
