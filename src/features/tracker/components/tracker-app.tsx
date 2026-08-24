@@ -126,14 +126,18 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
       });
     if (generation !== refreshGenerationRef.current) return;
 
-    await Promise.all(normalized.filter((result) => result.changed).map(async (result) => {
+    setReimportNoticeCount(normalized.filter((result) => result.needsReimport).length);
+    setSessions(normalized.map((result) => result.session));
+
+    const saveResults = await Promise.allSettled(normalized.filter((result) => result.changed).map(async (result) => {
       if (generation !== refreshGenerationRef.current) return;
       await store.save(result.session);
     }));
     if (generation !== refreshGenerationRef.current) return;
 
-    setReimportNoticeCount(normalized.filter((result) => result.needsReimport).length);
-    setSessions(normalized.map((result) => result.session));
+    if (saveResults.some((result) => result.status === "rejected")) {
+      setStatus("Trace-derived metrics are available for this session, but could not be written back yet.");
+    }
   }
 
   async function handleFiles(files: FileList | null) {
