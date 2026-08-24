@@ -15,6 +15,7 @@ describe("TrackerProgressChart", () => {
     expect(markup).toContain("Endurance - 20mm");
     expect(markup).toContain("Repeater - jug");
     expect(markup).toContain("class=\"chart-legend\"");
+    expect(markup).toContain("<span>Max force</span>");
     expect(markup).toContain("<details class=\"chart-details\"><summary>Show data</summary>");
     expect(markup).toContain("Progress data");
   });
@@ -33,6 +34,8 @@ describe("TrackerProgressChart", () => {
 
     expect(markup).toContain("Repeater - half crimp - Estimated avg repeater force");
     expect(markup).toContain("Repeater - half crimp - Max force");
+    expect(markup).toContain("<span>Average force</span>");
+    expect(markup).toContain("<span>Max force</span>");
   });
 
   it("renders kg labels, compact dates, and axis titles", () => {

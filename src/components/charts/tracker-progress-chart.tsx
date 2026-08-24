@@ -35,7 +35,7 @@ export function TrackerProgressChart({ points, selectedMetric }: Props) {
             <svg aria-hidden="true" focusable="false" viewBox="0 0 34 8">
               <path d="M2 4H32" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2.5" strokeDasharray={DASHES[index % DASHES.length]} />
             </svg>
-            <span>{item.label}</span>
+            <span>{chartLegendLabel(item.points[0])}</span>
           </li>
         ))}
       </ul>
@@ -138,4 +138,10 @@ function modeLabel(mode: TrackerMode) {
 function chartMetricLabel(point: ProgressPoint) {
   if (point.metricKey === "peakForceN") return "Max force";
   return formatProgressMetricLabel(point);
+}
+
+function chartLegendLabel(point: ProgressPoint) {
+  if (point.metricKey === "peakForceN") return "Max force";
+  if (point.metricKey.endsWith("AverageForceN")) return "Average force";
+  return chartMetricLabel(point);
 }
