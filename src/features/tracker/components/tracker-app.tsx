@@ -26,9 +26,10 @@ type DraftImport = Readonly<{
   tags: readonly string[];
   expanded: boolean;
   saved?: boolean;
+  unsupportedFilenames?: readonly string[];
 }>;
 
-type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "notes" | "tags">>;
+type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "hand" | "notes" | "tags">>;
 type SelectedMetric = "all" | TrackerMetricKey;
 type AvailableMetric = Extract<TrackerSession["metrics"][number], { available: true }>;
 type ActiveTab = "progress" | "import" | "history";
@@ -1132,12 +1133,14 @@ export function createDraftsFromCsvFiles(csvFiles: readonly ExtractedCsvFile[], 
 
   return csvFiles
     .filter((file) => !isInfoCsv(file.filename))
-    .map((file, index) => createDraftFromCsv(
-      file.source,
-      file.filename.trim() || `${source}-tindeq-${index + 1}.csv`,
-      `${source}-${index}-${now}-${file.byteSize}`,
+    .flatMap((file, index) => createDraftsFromCsv(
+      file,
+      source,
+      index,
+      now,
       metadataByBundle.get(bundleKey(file.filename)) ?? metadataByBundle.get("loose"),
-    ));
+    ))
+    .reduce<DraftImport[]>((drafts, draft) => collapseUnsupportedBundleDraft(drafts, draft), []);
 }
 
 function isInfoCsv(filename: string) {
@@ -1152,6 +1155,50 @@ function bundleKey(filename: string) {
 function leafName(filename: string) {
   const slash = filename.lastIndexOf("/");
   return slash === -1 ? filename.trim() : filename.slice(slash + 1).trim();
+}
+
+function collapseUnsupportedBundleDraft(drafts: DraftImport[], draft: DraftImport) {
+  if (draft.parsed || draft.error !== "Unsupported Tindeq CSV shape") return [...drafts, draft];
+
+  const bundle = bundleKey(draft.filename);
+  if (bundle === "loose") return [...drafts, draft];
+
+  const existingIndex = drafts.findIndex((item) => item.filename === bundle && item.unsupportedFilenames);
+  if (existingIndex === -1) return [...drafts, createUnsupportedBundleDraft(bundle, [draft.filename], draft.id)];
+
+  const nextDrafts = drafts.slice();
+  const existing = nextDrafts[existingIndex];
+  nextDrafts[existingIndex] = createUnsupportedBundleDraft(bundle, [...unsupportedBundleFilenames(existing), draft.filename], existing.id);
+  return nextDrafts;
+}
+
+function createUnsupportedBundleDraft(bundle: string, filenames: readonly string[], idSeed: string): DraftImport {
+  return {
+    id: unsupportedBundleDraftId(bundle, idSeed),
+    filename: bundle,
+    error: unsupportedBundleError(filenames),
+    grip: "",
+    testedAt: new Date().toISOString().slice(0, 16),
+    hand: "",
+    notes: "",
+    tags: [],
+    expanded: true,
+    unsupportedFilenames: filenames,
+  };
+}
+
+function unsupportedBundleDraftId(bundle: string, idSeed: string) {
+  return `${bundle}-unsupported-csvs-${idSeed}`;
+}
+
+function unsupportedBundleError(filenames: readonly string[]) {
+  const leafNames = filenames.map(leafName);
+  if (leafNames.length === 1) return `Unsupported Tindeq CSV shape in ${leafNames[0]}.`;
+  return `${leafNames.length} unsupported Tindeq CSV files: ${leafNames.join(", ")}.`;
+}
+
+function unsupportedBundleFilenames(draft: DraftImport) {
+  return draft.unsupportedFilenames ?? [draft.filename];
 }
 
 function parseTindeqInfoCsv(source: string): DraftDefaults {
@@ -1206,6 +1253,126 @@ function parseTindeqInfoDate(value?: string) {
   return `${year}-${month}-${day}T${hour}:${minute}`;
 }
 
+function createDraftsFromCsv(file: ExtractedCsvFile, source: string, index: number, now: number, defaults: DraftDefaults = {}) {
+  const filename = file.filename.trim() || `${source}-tindeq-${index + 1}.csv`;
+  const candidates = expandHandSpecificCsv(file.source, filename);
+  return candidates.map((candidate, candidateIndex) => createDraftFromCsv(
+    candidate.source,
+    candidate.filename,
+    `${source}-${index}-${candidateIndex}-${now}-${file.byteSize}`,
+    { ...defaults, ...candidate.defaults },
+  ));
+}
+
+function expandHandSpecificCsv(source: string, filename: string) {
+  const rows = parseCsvRows(source.replace(/^\uFEFF/, ""));
+  return expandSideBySideTraceCsv(rows, source, filename) ?? expandHandSpecificMetadataCsv(rows, source, filename) ?? [{ source, filename, defaults: {} }];
+}
+
+function expandSideBySideTraceCsv(rows: readonly (readonly string[])[], source: string, filename: string) {
+  const traceHeaderIndex = rows.findIndex((row) => handTraceColumns(row, "left") || handTraceColumns(row, "right"));
+  if (traceHeaderIndex === -1) return undefined;
+
+  const candidates = (["left", "right"] as const).flatMap((hand) => {
+    const traceColumns = handTraceColumns(rows[traceHeaderIndex] ?? [], hand);
+    if (!traceColumns) return [];
+
+    const summaryRows = rows.slice(0, traceHeaderIndex).map((row) => normalizeHandSummaryRow(row, hand));
+    if (!summaryRows.some((row) => row[0] === "Avg" || row[0] === "Peak")) return [];
+
+    const traceRows = rows.slice(traceHeaderIndex + 1)
+      .map((row) => [row[traceColumns.time] ?? "", row[traceColumns.weight] ?? ""])
+      .filter((row) => row.some((cell) => cell.trim()));
+    if (traceRows.length === 0) return [];
+    if (isEmptyHandTrace(summaryRows, traceRows)) return [];
+
+    return [{
+      source: stringifyCsvRows([...summaryRows, ["time", "weight"], ...traceRows]),
+      filename: handFilename(filename, hand),
+      defaults: { hand },
+    }];
+  });
+
+  return candidates;
+}
+
+function handTraceColumns(row: readonly string[], hand: "left" | "right") {
+  const time = row.findIndex((cell) => normalizeCsvHeader(cell) === `time ${hand}`);
+  const weight = row.findIndex((cell) => normalizeCsvHeader(cell) === `weight ${hand}`);
+  return time === -1 || weight === -1 ? undefined : { time, weight };
+}
+
+function normalizeHandSummaryRow(row: readonly string[], hand: "left" | "right") {
+  const first = row[0]?.trim() ?? "";
+  const suffix = ` ${hand}`;
+  if (first.toLowerCase().endsWith(suffix)) return [first.slice(0, -suffix.length), ...row.slice(1)];
+  return [...row];
+}
+
+function isEmptyHandTrace(summaryRows: readonly (readonly string[])[], traceRows: readonly (readonly string[])[]) {
+  const summaryValues = summaryRows
+    .filter((row) => row[0] === "Avg" || row[0] === "Peak")
+    .flatMap((row) => row.slice(1).map((value) => Number(value)));
+  const hasUsefulSummary = summaryValues.some((value) => Number.isFinite(value) && value > 0);
+  if (hasUsefulSummary) return false;
+
+  const maxTraceWeight = Math.max(0, ...traceRows.map((row) => Number(row[1])).filter(Number.isFinite));
+  return maxTraceWeight < 0.25;
+}
+
+function expandHandSpecificMetadataCsv(rows: readonly (readonly string[])[], source: string, filename: string) {
+  const headers = rows[0];
+  const values = rows[1];
+  if (!headers || !values || headers.length !== values.length) return undefined;
+
+  const candidates = (["left", "right"] as const).flatMap((hand) => {
+    const normalized = normalizeMetadataRowsForHand(headers, values, hand);
+    if (!normalized) return [];
+    return [{
+      source: stringifyCsvRows([normalized.headers, normalized.values, ...rows.slice(2)]),
+      filename: handFilename(filename, hand),
+      defaults: { hand },
+    }];
+  });
+
+  return candidates.length > 0 ? candidates : undefined;
+}
+
+function normalizeMetadataRowsForHand(headers: readonly string[], values: readonly string[], hand: "left" | "right") {
+  const nextHeaders: string[] = [];
+  const nextValues: string[] = [];
+  let foundHandSpecificField = false;
+  for (const [index, header] of headers.entries()) {
+    const normalized = normalizeCsvHeader(header);
+    const suffix = ` ${hand}`;
+    if (normalized.endsWith(suffix)) {
+      nextHeaders.push(header.trim().slice(0, -suffix.length));
+      nextValues.push(values[index] ?? "");
+      foundHandSpecificField = true;
+    } else if (!normalized.endsWith(" left") && !normalized.endsWith(" right")) {
+      nextHeaders.push(header);
+      nextValues.push(values[index] ?? "");
+    }
+  }
+  return foundHandSpecificField ? { headers: nextHeaders, values: nextValues } : undefined;
+}
+
+function normalizeCsvHeader(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function handFilename(filename: string, hand: "left" | "right") {
+  return `${filename} (${hand})`;
+}
+
+function stringifyCsvRows(rows: readonly (readonly string[])[]) {
+  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+function csvCell(value: string) {
+  return /[",\n\r]/.test(value) ? `"${value.replaceAll("\"", "\"\"")}"` : value;
+}
+
 function createDraftFromCsv(source: string, filename: string, idSuffix: string, defaults: DraftDefaults = {}): DraftImport {
   const detection = detectTindeqCsv(source, filename);
   const csvDefaults = detection.status === "invalid" ? {} : draftDefaultsFromParsedCsv(detection.parsed);
@@ -1215,7 +1382,7 @@ function createDraftFromCsv(source: string, filename: string, idSuffix: string, 
     filename,
     grip: mergedDefaults.grip ?? "",
     testedAt: mergedDefaults.testedAt ?? new Date().toISOString().slice(0, 16),
-    hand: "" as const,
+    hand: mergedDefaults.hand ?? "",
     notes: mergedDefaults.notes ?? "",
     tags: mergedDefaults.tags ?? [],
     expanded: true,

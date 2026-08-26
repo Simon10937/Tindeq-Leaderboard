@@ -71,6 +71,101 @@ describe("createDraftsFromCsvFiles", () => {
 
     expect(drafts[0].testedAt).toBe("2026-07-05T09:31");
   });
+
+  it("collapses repeated unsupported data CSVs from one ZIP into one import card", () => {
+    const drafts = createDraftsFromCsvFiles([
+      {
+        filename: "repeaters_2026_06_08_22_35_Rehab HC Curl_.zip / data_set_1.csv",
+        byteSize: 100,
+        source: "summary,value\nfoo,1\n",
+      },
+      {
+        filename: "repeaters_2026_06_08_22_35_Rehab HC Curl_.zip / data_set_2.csv",
+        byteSize: 120,
+        source: "summary,value\nbar,2\n",
+      },
+    ], "file", 1);
+
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].filename).toBe("repeaters_2026_06_08_22_35_Rehab HC Curl_.zip");
+    expect(drafts[0].parsed).toBeUndefined();
+    expect(drafts[0].error).toContain("2 unsupported Tindeq CSV files");
+    expect(drafts[0].error).toContain("data_set_1.csv");
+    expect(drafts[0].error).toContain("data_set_2.csv");
+  });
+
+  it("keeps supported sessions visible while summarizing unsupported CSVs from the same ZIP", () => {
+    const drafts = createDraftsFromCsvFiles([
+      {
+        filename: "repeaters.zip / data_set_1.csv",
+        byteSize: 100,
+        source: "summary,value\nfoo,1\n",
+      },
+      {
+        filename: "repeaters.zip / data_set_2.csv",
+        byteSize: 120,
+        source: ",Overall Avg\nAvg,0.0\nPeak,0.0\n,\ntime,weight\n0.054067,0.009124040603637695\n0.065411,0.008312106132507324\n",
+      },
+    ], "file", 1);
+
+    expect(drafts).toHaveLength(2);
+    expect(drafts.some((draft) => draft.parsed?.mode === "repeater")).toBe(true);
+    expect(drafts.filter((draft) => draft.error)).toHaveLength(1);
+  });
+
+  it("splits left-right repeater exports into hand-specific drafts", () => {
+    const drafts = createDraftsFromCsvFiles([
+      {
+        filename: "repeaters.zip / info.csv",
+        byteSize: 262,
+        source: "date,tag,comment,unit,reps,work dur.,pause btw. reps,sets,pause btw. sets,type,mvc left,mvc right,Work Level (% of mvc),Rest level (% of mvc)\n2026-06-08 22:35:53,Rehab HC Curl ,Half as tested beforehand,SI,5,5,30,2,155,left/right,22.0713749,24.9851704,80,20\n",
+      },
+      {
+        filename: "repeaters.zip / data_set_1.csv",
+        byteSize: 649997,
+        source: ",Overall Avg,Rep1,Rep2\nAvg Left,16.5,16.4,17.9\nAvg Right,18.7,18.0,18.9\nPeak Left,18.9,20.4,20.7\nPeak Right,20.7,20.3,20.9\n,\ntime left,weight left,time right,weight right\n0.05,13.5,0.06,7.7\n0.07,13.8,0.08,7.8\n0.09,14.0,0.10,7.9\n",
+      },
+    ], "file", 1);
+
+    expect(drafts).toHaveLength(2);
+    expect(drafts.map((draft) => draft.hand)).toEqual(["left", "right"]);
+    expect(drafts.every((draft) => draft.parsed?.mode === "repeater")).toBe(true);
+    expect(drafts[0].filename).toBe("repeaters.zip / data_set_1.csv (left)");
+    expect(drafts[1].filename).toBe("repeaters.zip / data_set_1.csv (right)");
+    expect(drafts[0].notes).toContain("Tindeq tag: Rehab HC Curl");
+  });
+
+  it("ignores empty left-right repeater data sets instead of surfacing NaN errors", () => {
+    const drafts = createDraftsFromCsvFiles([
+      {
+        filename: "repeaters.zip / data_set_2.csv",
+        byteSize: 5553,
+        source: ",Overall Avg\nAvg Left,0.0\nAvg Right,NaN\nPeak Left,0.0\nPeak Right,NaN\n,\ntime left,weight left,time right,weight right\n,,0.069665,0.07552540302276611\n,,0.081749,0.06840541958808899\n,,0.093836,0.06228071451187134\n",
+      },
+    ], "file", 1);
+
+    expect(drafts).toEqual([]);
+  });
+
+  it("splits left-right metadata exports into hand-specific drafts", () => {
+    const drafts = createDraftsFromCsvFiles([
+      {
+        filename: "peakforce-both.csv",
+        byteSize: 256,
+        source: "date,tag,comment,unit,type,max weight left,max weight right\n2026-29-07 09:31:55,max force test,,SI,left/right,10,12\n",
+      },
+    ], "file", 1);
+
+    expect(drafts).toHaveLength(2);
+    expect(drafts.map((draft) => draft.hand)).toEqual(["left", "right"]);
+    expect(drafts.every((draft) => draft.parsed?.mode === "peak_force")).toBe(true);
+    const peakValues = drafts.map((draft) => {
+      const metric = draft.parsed?.metrics.find((item) => item.key === "peakForceN");
+      return metric?.available ? metric.value : undefined;
+    });
+    expect(peakValues[0]).toBeCloseTo(98.0665);
+    expect(peakValues[1]).toBeCloseTo(117.6798);
+  });
 });
 
 describe("countSessionsThisWeek", () => {
