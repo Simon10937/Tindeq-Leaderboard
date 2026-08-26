@@ -510,6 +510,10 @@ label,
   gap: 8px;
 }
 
+.grip-picker {
+  gap: 10px;
+}
+
 .chip {
   background: var(--surface-low);
   border: 1px solid var(--line);

@@ -732,21 +732,11 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
               </div>
               {draft.parsed && !draft.saved && draft.expanded && (
                 <div className="draft-fields">
-                  <fieldset className="chip-field">
-                    <legend>Assign grip type</legend>
-                    <div className="chip-list">
-                      {gripPresets.map((grip) => (
-                        <button
-                          className={draft.grip === grip ? "chip chip-selected" : "chip"}
-                          key={grip}
-                          type="button"
-                          onClick={() => updateDraft(draft.id, { grip })}
-                        >
-                          {grip}
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
+                  <GripPicker
+                    legend="Assign grip type"
+                    value={draft.grip}
+                    onChange={(grip) => updateDraft(draft.id, { grip })}
+                  />
                   <label>Date
                     <input type="datetime-local" value={draft.testedAt} onChange={(event) => updateDraft(draft.id, { testedAt: event.currentTarget.value })} />
                   </label>
@@ -813,21 +803,11 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
             <>
               {sessionEdit?.sessionId === selectedSession.id ? (
                 <div className="draft-fields session-edit-form">
-                  <fieldset className="chip-field">
-                    <legend>Primary grip</legend>
-                    <div className="chip-list">
-                      {gripPresets.map((grip) => (
-                        <button
-                          className={sessionEdit.context.grip === grip ? "chip chip-selected" : "chip"}
-                          key={grip}
-                          type="button"
-                          onClick={() => setSessionEdit((current) => current ? { ...current, context: { ...current.context, grip } } : current)}
-                        >
-                          {grip}
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
+                  <GripPicker
+                    legend="Primary grip"
+                    value={sessionEdit.context.grip}
+                    onChange={(grip) => setSessionEdit((current) => current ? { ...current, context: { ...current.context, grip } } : current)}
+                  />
                   <label>Date
                     <input type="datetime-local" value={sessionEdit.context.testedAt} onChange={(event) => {
                       const testedAt = event.currentTarget.value;
@@ -1016,6 +996,35 @@ function TagEditor({
           ))}
         </div>
       )}
+    </fieldset>
+  );
+}
+
+function GripPicker({ legend, value, onChange }: Readonly<{ legend: string; value: string; onChange: (value: string) => void }>) {
+  const selectedPreset = gripPresets.includes(value);
+
+  return (
+    <fieldset className="chip-field grip-picker">
+      <legend>{legend}</legend>
+      <div className="chip-list">
+        {gripPresets.map((grip) => (
+          <button
+            className={selectedPreset && value === grip ? "chip chip-selected" : "chip"}
+            key={grip}
+            type="button"
+            onClick={() => onChange(grip)}
+          >
+            {grip}
+          </button>
+        ))}
+      </div>
+      <label>Custom grip
+        <input
+          value={value}
+          onChange={(event) => onChange(event.currentTarget.value)}
+          placeholder="e.g. 10mm edge, mono pocket, slope rail"
+        />
+      </label>
     </fieldset>
   );
 }
