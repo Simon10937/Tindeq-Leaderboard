@@ -31,7 +31,7 @@ type DraftImport = Readonly<{
 }>;
 
 type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "hand" | "notes" | "tags">>;
-type SelectedMetric = "all" | TrackerMetricKey;
+type SelectedMetric = "auto" | "all" | TrackerMetricKey;
 type AvailableMetric = Extract<TrackerSession["metrics"][number], { available: true }>;
 type ActiveTab = "progress" | "import" | "history";
 type ChartMode = Extract<TrackerMode, "endurance" | "repeater" | "peak_force">;
@@ -66,7 +66,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const [sessions, setSessions] = useState<TrackerSession[]>([]);
   const [drafts, setDrafts] = useState<DraftImport[]>([]);
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => typeof window === "undefined" ? initialTab : readActiveTabFromLocation(initialTab));
-  const [selectedMetric, setSelectedMetric] = useState<SelectedMetric>("all");
+  const [selectedMetric, setSelectedMetric] = useState<SelectedMetric>("auto");
   const [modeFilter, setModeFilter] = useState<ChartMode>("repeater");
   const [gripFilter, setGripFilter] = useState("all");
   const [handFilter, setHandFilter] = useState<HandFilter>("all");
@@ -440,6 +440,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
     ...sessions.flatMap((session) => normalizeTags(session.tags)),
     ...drafts.flatMap((draft) => normalizeTags(draft.tags)),
   ])).sort(), [drafts, sessions]);
+  const gripSuggestions = useMemo(() => gripSuggestionsForSessionsAndDrafts(sessions, drafts), [drafts, sessions]);
   const visibleImportDrafts = drafts;
   const availableModes = useMemo(() => chartModesForSessions(sessions), [sessions]);
   const effectiveModeFilter = availableModes.includes(modeFilter) ? modeFilter : availableModes[0];
@@ -459,7 +460,11 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const unavailableMetricOptions = modeMetricOptions.filter((option) => !metricAvailability.get(option.key)?.count);
 
   const preferredMetric = preferredMetricForMode(effectiveModeFilter, metricAvailability);
-  const effectiveSelectedMetric = selectedMetric !== "all" && !metricAvailability.get(selectedMetric)?.count ? preferredMetric ?? "all" : selectedMetric;
+  const effectiveSelectedMetric = selectedMetric === "auto"
+    ? preferredMetric ?? "all"
+    : selectedMetric !== "all" && !metricAvailability.get(selectedMetric)?.count
+      ? preferredMetric ?? "all"
+      : selectedMetric;
   const selectedMetricKey = effectiveSelectedMetric === "all" ? undefined : effectiveSelectedMetric;
   const progressPoints = filteredSessions.flatMap((session) => progressPointsForSession(session, selectedMetricKey));
   const summaryMetricKey = selectedMetricKey ?? preferredMetric;
@@ -526,7 +531,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                 type="button"
                 onClick={() => {
                   setModeFilter(mode);
-                  setSelectedMetric("all");
+                  setSelectedMetric("auto");
                   setGripFilter("");
                   setHandFilter("all");
                 }}
@@ -540,7 +545,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
         <div className="plot-chip-area">
           <div className="chip-list plot-chip-list" aria-label="Metric">
             <button
-              className={effectiveSelectedMetric === "all" ? "chip chip-selected" : "chip"}
+              className={selectedMetric === "all" ? "chip chip-selected" : "chip"}
               type="button"
               onClick={() => setSelectedMetric("all")}
             >
@@ -736,6 +741,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                   <GripPicker
                     legend="Assign grip type"
                     value={draft.grip}
+                    suggestions={gripSuggestions}
                     hint={draft.gripSuggestion}
                     onChange={(grip) => updateDraft(draft.id, { grip })}
                   />
@@ -808,6 +814,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                   <GripPicker
                     legend="Primary grip"
                     value={sessionEdit.context.grip}
+                    suggestions={gripSuggestions}
                     onChange={(grip) => setSessionEdit((current) => current ? { ...current, context: { ...current.context, grip } } : current)}
                   />
                   <label>Date
@@ -1002,16 +1009,17 @@ function TagEditor({
   );
 }
 
-function GripPicker({ legend, value, hint, onChange }: Readonly<{ legend: string; value: string; hint?: string; onChange: (value: string) => void }>) {
-  const selectedPreset = gripPresets.includes(value);
+function GripPicker({ legend, value, suggestions, hint, onChange }: Readonly<{ legend: string; value: string; suggestions: readonly string[]; hint?: string; onChange: (value: string) => void }>) {
+  const gripChoices = uniqueGripChoices(suggestions);
+  const selectedChoice = gripChoices.includes(value);
 
   return (
     <fieldset className="chip-field grip-picker">
       <legend>{legend}</legend>
       <div className="chip-list">
-        {gripPresets.map((grip) => (
+        {gripChoices.map((grip) => (
           <button
-            className={selectedPreset && value === grip ? "chip chip-selected" : "chip"}
+            className={selectedChoice && value === grip ? "chip chip-selected" : "chip"}
             key={grip}
             type="button"
             onClick={() => onChange(grip)}
@@ -1034,6 +1042,28 @@ function GripPicker({ legend, value, hint, onChange }: Readonly<{ legend: string
 
 function addTag(tags: readonly string[], tag: string) {
   return normalizeTags([...tags, tag]);
+}
+
+export function gripSuggestionsForSessionsAndDrafts(sessions: readonly TrackerSession[], drafts: readonly Pick<DraftImport, "grip">[]) {
+  return uniqueGripChoices([
+    ...sessions.map((session) => session.grip),
+    ...drafts.map((draft) => draft.grip),
+  ]);
+}
+
+function uniqueGripChoices(values: readonly string[]) {
+  const seen = new Set(gripPresets.map(normalizeGripTag));
+  const custom = values
+    .map((value) => value.trim().replace(/\s+/g, " "))
+    .filter(Boolean)
+    .filter((value) => {
+      const normalized = normalizeGripTag(value);
+      if (seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    })
+    .sort((a, b) => a.localeCompare(b));
+  return [...gripPresets, ...custom];
 }
 
 function readActiveTabFromLocation(fallback: ActiveTab): ActiveTab {

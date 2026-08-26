@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authDescription, countSessionsThisWeek, createDraftsFromCsvFiles, gripOptionsForMode, handOptionsForSessions, latestComparableChange, localUploadConflictMessage, localUploadFailureMessage, localUploadPromptMessage, normalizeWeeklyTarget, resetConfirmationMessage, resetStatusMessage, resolveGripFilter, resolveHandFilter, shouldIgnoreSignedInAuthEvent, supabaseReadyMessage, uploadLocalSessions, visibleSessionTags } from "./tracker-app";
+import { authDescription, countSessionsThisWeek, createDraftsFromCsvFiles, gripOptionsForMode, gripSuggestionsForSessionsAndDrafts, handOptionsForSessions, latestComparableChange, localUploadConflictMessage, localUploadFailureMessage, localUploadPromptMessage, normalizeWeeklyTarget, resetConfirmationMessage, resetStatusMessage, resolveGripFilter, resolveHandFilter, shouldIgnoreSignedInAuthEvent, supabaseReadyMessage, uploadLocalSessions, visibleSessionTags } from "./tracker-app";
 import type { TrackerSession } from "@/features/tracker/types";
 
 describe("createDraftsFromCsvFiles", () => {
@@ -448,6 +448,38 @@ describe("gripOptionsForMode", () => {
     expect(resolveGripFilter("", options)).toBe("half crimp");
     expect(resolveGripFilter("all", options)).toBe("half crimp");
     expect(resolveGripFilter("single finger", options)).toBe("single finger");
+  });
+});
+
+describe("gripSuggestionsForSessionsAndDrafts", () => {
+  const baseSession: TrackerSession = {
+    id: "base",
+    mode: "peak_force",
+    parserVersion: "test",
+    filename: "test.csv",
+    sourceSummary: "Peak force",
+    vendorMetadata: {},
+    metrics: [],
+    trace: { elapsedUs: [], forceN: [] },
+    warnings: [],
+    grip: "single finger",
+    testedAt: "2026-08-24T12:00:00.000Z",
+    createdAt: "2026-08-24T12:00:00.000Z",
+  };
+
+  it("adds saved and pending custom grips after presets without duplicating presets", () => {
+    const suggestions = gripSuggestionsForSessionsAndDrafts([
+      { ...baseSession, id: "preset", grip: "half crimp" },
+      { ...baseSession, id: "custom", grip: "  rehab hammer curl  " },
+    ], [
+      { grip: "mono pocket" },
+      { grip: "Half   Crimp" },
+    ]);
+
+    expect(suggestions).toContain("half crimp");
+    expect(suggestions).toContain("rehab hammer curl");
+    expect(suggestions).toContain("mono pocket");
+    expect(suggestions.filter((grip) => grip.toLowerCase() === "half crimp")).toHaveLength(1);
   });
 });
 

@@ -11,6 +11,7 @@ type Props = Readonly<{
 type ProgressSeries = {
   key: string;
   label: string;
+  fullLabel: string;
   points: ProgressPoint[];
   color: string;
   dash: string;
@@ -21,7 +22,7 @@ export function TrackerProgressChart({ points, selectedMetric }: Props) {
   const visible = selectedMetric ? points.filter((point) => point.metricKey === selectedMetric) : points;
   if (visible.length === 0) return <p role="status">No progress metrics are available for these filters yet.</p>;
 
-  const series = groupProgressSeries(visible);
+  const series = groupProgressSeries(visible, selectedMetric === undefined);
   const times = visible.map((point) => Date.parse(point.testedAt));
   const values = visible.map(displayValue);
   const timeMin = Math.min(...times);
@@ -72,8 +73,8 @@ export function TrackerProgressChart({ points, selectedMetric }: Props) {
             <g key={item.key}>
               <path d={path} fill="none" stroke={item.color} strokeWidth="3" strokeDasharray={item.dash} />
               {ordered.map((point) => (
-                <circle key={`${point.sessionId}-${point.metricKey}`} cx={x(Date.parse(point.testedAt))} cy={y(displayValue(point))} r="5" style={{ stroke: item.color }}>
-                  <title>{`${item.label}: ${formatMetricValue(point)} on ${formatCompactDate(point.testedAt)}`}</title>
+                <circle key={`${point.sessionId}-${point.metricKey}`} cx={x(Date.parse(point.testedAt))} cy={y(displayValue(point))} r="3.25" style={{ stroke: item.color }}>
+                  <title>{`${item.fullLabel}: ${formatMetricValue(point)} on ${formatCompactDate(point.testedAt)}`}</title>
                 </circle>
               ))}
             </g>
@@ -83,7 +84,7 @@ export function TrackerProgressChart({ points, selectedMetric }: Props) {
       <details className="chart-details">
         <summary>Show data</summary>
         <ul className="chart-key" aria-label="Progress chart series">
-          {series.map((item) => <li key={item.key}><strong>{item.label}</strong> - {item.styleLabel}</li>)}
+          {series.map((item) => <li key={item.key}><strong>{item.fullLabel}</strong> - {item.styleLabel}</li>)}
         </ul>
         <div className="table-scroll">
           <table>
@@ -107,14 +108,15 @@ export function TrackerProgressChart({ points, selectedMetric }: Props) {
   );
 }
 
-function groupProgressSeries(points: readonly ProgressPoint[]) {
+function groupProgressSeries(points: readonly ProgressPoint[], includeMetricInLegend: boolean) {
   const grouped = new Map<string, ProgressSeries>();
   for (const point of points) {
     const handKey = point.hand ?? "both";
     const key = [point.mode, point.grip, handKey, point.metricKey].join(":");
     const style = seriesStyle(point);
-    const label = `${modeLabel(point.mode)} - ${point.grip} - ${handLabel(point.hand)} - ${chartMetricLabel(point)}`;
-    const item = grouped.get(key) ?? { key, label, points: [], ...style };
+    const fullLabel = `${modeLabel(point.mode)} - ${point.grip} - ${handLabel(point.hand)} - ${chartMetricLabel(point)}`;
+    const label = includeMetricInLegend ? `${handLabel(point.hand)} ${shortMetricLabel(point)}` : handLabel(point.hand);
+    const item = grouped.get(key) ?? { key, label, fullLabel, points: [], ...style };
     item.points.push(point);
     grouped.set(key, item);
   }
@@ -147,6 +149,13 @@ function handLabel(hand?: ProgressPoint["hand"]) {
   if (hand === "right") return "Right";
   if (hand === "both") return "Both";
   return "Unspecified";
+}
+
+function shortMetricLabel(point: ProgressPoint) {
+  if (point.metricKey === "peakForceN") return "max";
+  if (point.metricKey.endsWith("AverageForceN")) return "avg";
+  if (point.metricKey === "criticalForceN") return "critical";
+  return "metric";
 }
 
 function displayValue(point: ProgressPoint) {

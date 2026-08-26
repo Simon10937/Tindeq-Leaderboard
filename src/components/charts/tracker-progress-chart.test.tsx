@@ -15,7 +15,7 @@ describe("TrackerProgressChart", () => {
     expect(markup).toContain("Endurance - 20mm");
     expect(markup).toContain("Repeater - jug");
     expect(markup).toContain("class=\"chart-legend\"");
-    expect(markup).toContain("<span>Repeater - jug - Unspecified - Max force</span>");
+    expect(markup).toContain("<span>Unspecified max</span>");
     expect(markup).toContain("<details class=\"chart-details\"><summary>Show data</summary>");
     expect(markup).toContain("Progress data");
   });
@@ -32,8 +32,8 @@ describe("TrackerProgressChart", () => {
       { sessionId: "1", mode: "repeater", grip: "half crimp", testedAt: "2026-08-20T10:00:00.000Z", metricKey: "peakForceN", label: "Peak force", value: 150, unit: "N" },
     ]} />);
 
-    expect(markup).toContain("Repeater - half crimp - Unspecified - Estimated avg repeater force");
-    expect(markup).toContain("Repeater - half crimp - Unspecified - Max force");
+    expect(markup).toContain("<span>Unspecified avg</span>");
+    expect(markup).toContain("<span>Unspecified max</span>");
   });
 
   it("keeps peak-force points split by hand metadata", () => {
@@ -42,11 +42,22 @@ describe("TrackerProgressChart", () => {
       { sessionId: "upload", mode: "peak_force", grip: "half crimp", hand: "right", testedAt: "2026-08-26T11:42:00.000Z", metricKey: "peakForceN", label: "Max force", value: 48.249, unit: "N" },
     ]} />);
 
-    expect(markup).toContain("Peak force - half crimp - Left - Max force");
-    expect(markup).toContain("Peak force - half crimp - Right - Max force");
+    expect(markup).toContain("<span>Left max</span>");
+    expect(markup).toContain("<span>Right max</span>");
     expect(markup).toContain("color:#0f766e");
     expect(markup).toContain("color:#b45309");
     expect(markup).toContain("M ");
+  });
+
+  it("uses hand-only legend labels when one metric is selected", () => {
+    const markup = renderToStaticMarkup(<TrackerProgressChart selectedMetric="peakForceN" points={[
+      { sessionId: "manual", mode: "peak_force", grip: "half crimp", hand: "left", testedAt: "2026-08-24T12:00:00.000Z", metricKey: "peakForceN", label: "Max force", value: 39.2266, unit: "N" },
+      { sessionId: "upload", mode: "peak_force", grip: "half crimp", hand: "right", testedAt: "2026-08-26T11:42:00.000Z", metricKey: "peakForceN", label: "Max force", value: 48.249, unit: "N" },
+    ]} />);
+
+    expect(markup).toContain("<span>Left</span>");
+    expect(markup).toContain("<span>Right</span>");
+    expect(markup).not.toContain("<span>Left max</span>");
   });
 
   it("renders kg labels, compact dates, and axis titles", () => {
