@@ -132,6 +132,7 @@ function compactValueTicks(min: number, max: number) {
 function modeLabel(mode: TrackerMode) {
   if (mode === "endurance") return "Endurance";
   if (mode === "repeater") return "Repeater";
+  if (mode === "peak_force") return "Peak force";
   return "Trace only";
 }
 

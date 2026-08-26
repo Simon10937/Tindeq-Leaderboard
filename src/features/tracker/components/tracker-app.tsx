@@ -7,6 +7,7 @@ import { formatCompactDate, formatMetricValue, formatProgressMetricLabel } from 
 import { extractCsvFiles, type ExtractedCsvFile } from "@/features/tracker/import/extract-files";
 import { detectTindeqCsv } from "@/features/tracker/parsers/detect";
 import { augmentStoredEnduranceMetrics } from "@/features/tracker/parsers/endurance";
+import { augmentStoredPeakForceMetrics } from "@/features/tracker/parsers/peak-force";
 import { augmentStoredRepeaterMetrics } from "@/features/tracker/parsers/repeater";
 import { parseCsvRows } from "@/features/tracker/parsers/tindeq-shared";
 import { buildTrackerSession, normalizeStoredTrackerSession, normalizeTags, progressPointsForSession, updateTrackerSessionMetadata, validateImportContext, type ImportContext, type ParsedTrackerCsv, type ProgressPoint, type TrackerMetricKey, type TrackerMode, type TrackerSession } from "@/features/tracker/types";
@@ -31,15 +32,17 @@ type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "notes" | "
 type SelectedMetric = "all" | TrackerMetricKey;
 type AvailableMetric = Extract<TrackerSession["metrics"][number], { available: true }>;
 type ActiveTab = "progress" | "import" | "history";
-type ChartMode = Extract<TrackerMode, "endurance" | "repeater">;
+type ChartMode = Extract<TrackerMode, "endurance" | "repeater" | "peak_force">;
 type SessionEditState = Readonly<{ sessionId: string; context: ImportContext }>;
 type MetricOption = Readonly<{ key: TrackerMetricKey; label: string; mode?: TrackerMode }>;
 
 const metricOptions: MetricOption[] = [
   { key: "criticalForceN", label: "Critical force", mode: "endurance" },
   { key: "enduranceAverageForceN", label: "Endurance average force", mode: "endurance" },
+  { key: "peakForceN", label: "Endurance max force", mode: "endurance" },
   { key: "repeaterAverageForceN", label: "Repeater average force", mode: "repeater" },
-  { key: "peakForceN", label: "Max force" },
+  { key: "peakForceN", label: "Repeater max force", mode: "repeater" },
+  { key: "peakForceN", label: "Peak force max", mode: "peak_force" },
 ];
 
 const gripPresets = ["20mm edge", "15mm edge", "half crimp", "rehab half crimp", "open hand", "pinch", "jug"];
@@ -123,6 +126,14 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
           session: endurance.session,
           changed: result.changed || endurance.changed,
           needsReimport: result.needsReimport || endurance.needsReimport,
+        };
+      })
+      .map((result) => {
+        const peakForce = augmentStoredPeakForceMetrics(result.session);
+        return {
+          session: peakForce.session,
+          changed: result.changed || peakForce.changed,
+          needsReimport: result.needsReimport || peakForce.needsReimport,
         };
       });
     if (generation !== refreshGenerationRef.current) return;
@@ -1125,42 +1136,57 @@ function parseTindeqInfoDate(value?: string) {
   const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
   if (!match) return undefined;
 
-  const [, year, middle, last, hour, minute] = match;
-  const month = Number(middle) > 12 ? last : middle;
-  const day = Number(middle) > 12 ? middle : last;
+  const [, year, day, month, hour, minute] = match;
+  if (Number(day) < 1 || Number(day) > 31 || Number(month) < 1 || Number(month) > 12) return undefined;
   return `${year}-${month}-${day}T${hour}:${minute}`;
 }
 
 function createDraftFromCsv(source: string, filename: string, idSuffix: string, defaults: DraftDefaults = {}): DraftImport {
   const detection = detectTindeqCsv(source, filename);
+  const csvDefaults = detection.status === "invalid" ? {} : draftDefaultsFromParsedCsv(detection.parsed);
+  const mergedDefaults = { ...csvDefaults, ...defaults };
   const base = {
     id: `${filename}-${idSuffix}`,
     filename,
-    grip: defaults.grip ?? "",
-    testedAt: defaults.testedAt ?? new Date().toISOString().slice(0, 16),
+    grip: mergedDefaults.grip ?? "",
+    testedAt: mergedDefaults.testedAt ?? new Date().toISOString().slice(0, 16),
     hand: "" as const,
-    notes: defaults.notes ?? "",
-    tags: defaults.tags ?? [],
+    notes: mergedDefaults.notes ?? "",
+    tags: mergedDefaults.tags ?? [],
     expanded: true,
   };
   if (detection.status === "invalid") return { ...base, error: detection.error };
   return {
     ...base,
     parsed: detection.parsed,
-    notes: [defaults.notes, ...detection.parsed.warnings].filter(Boolean).join(" "),
+    notes: [base.notes, ...detection.parsed.warnings].filter(Boolean).join(" "),
+  };
+}
+
+function draftDefaultsFromParsedCsv(parsed: ParsedTrackerCsv): DraftDefaults {
+  const notes = [
+    parsed.vendorMetadata.comment,
+    parsed.vendorMetadata.tag ? `Tindeq tag: ${parsed.vendorMetadata.tag}` : undefined,
+  ].filter(Boolean).join(" - ");
+
+  return {
+    grip: gripFromSourceTag(parsed.vendorMetadata.tag),
+    testedAt: parseTindeqInfoDate(parsed.vendorMetadata.date),
+    notes: notes || undefined,
   };
 }
 
 function modeLabel(mode?: TrackerMode) {
   if (mode === "endurance") return "Endurance";
   if (mode === "repeater") return "Repeater";
+  if (mode === "peak_force") return "Peak force";
   if (mode === "unsupported_trace") return "Trace only";
   return "Invalid";
 }
 
 function chartModesForSessions(sessions: readonly TrackerSession[]): ChartMode[] {
-  const detected = new Set(sessions.flatMap((session) => session.mode === "endurance" || session.mode === "repeater" ? [session.mode] : []));
-  const ordered: ChartMode[] = ["repeater", "endurance"];
+  const detected = new Set(sessions.flatMap((session) => session.mode === "endurance" || session.mode === "repeater" || session.mode === "peak_force" ? [session.mode] : []));
+  const ordered: ChartMode[] = ["repeater", "endurance", "peak_force"];
   return ordered.filter((mode) => detected.size === 0 || detected.has(mode));
 }
 
@@ -1197,7 +1223,9 @@ function preferredMetricForMode(
 ): TrackerMetricKey | undefined {
   const preferredOrder: TrackerMetricKey[] = mode === "endurance"
     ? ["enduranceAverageForceN", "peakForceN", "criticalForceN"]
-    : ["repeaterAverageForceN", "peakForceN"];
+    : mode === "repeater"
+      ? ["repeaterAverageForceN", "peakForceN"]
+      : ["peakForceN"];
 
   return preferredOrder.find((key) => availability.get(key)?.count);
 }
@@ -1208,6 +1236,7 @@ function progressMetricLabel(key: TrackerMetricKey, mode?: TrackerMode) {
   if (key === "repeaterAverageForceN") return "Repeater average force";
   if (mode === "endurance") return "Endurance max force";
   if (mode === "repeater") return "Repeater max force";
+  if (mode === "peak_force") return "Peak force max";
   return "Max force";
 }
 

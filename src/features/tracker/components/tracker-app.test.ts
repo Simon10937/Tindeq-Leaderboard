@@ -43,6 +43,34 @@ describe("createDraftsFromCsvFiles", () => {
     expect(drafts[0].grip).toBe("");
     expect(drafts[0].notes).toContain("Tindeq tag: mystery grip 3kg");
   });
+
+  it("uses peak-force CSV metadata when no info.csv is present", () => {
+    const drafts = createDraftsFromCsvFiles([
+      {
+        filename: "peakforce-single.csv",
+        byteSize: 256,
+        source: "date,tag,comment,unit,type,max weight,body weight,moment arm length,force/BW,torque,torque/BW,%BW,norm force,norm force/BW,norm torque,norm torque/BW\n2026-29-07 09:31:55,max force test ,,SI,single,10.3841515,,,,,,,,,,\n",
+      },
+    ], "file", 1);
+
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].parsed?.mode).toBe("peak_force");
+    expect(drafts[0].testedAt).toBe("2026-07-29T09:31");
+    expect(drafts[0].notes).toContain("Tindeq tag: max force test");
+    expect(drafts[0].parsed?.metrics.find((metric) => metric.key === "peakForceN")).toMatchObject({ available: true });
+  });
+
+  it("parses ambiguous Tindeq metadata dates as year-day-month", () => {
+    const drafts = createDraftsFromCsvFiles([
+      {
+        filename: "peakforce-single.csv",
+        byteSize: 256,
+        source: "date,tag,comment,unit,type,max weight,body weight,moment arm length,force/BW,torque,torque/BW,%BW,norm force,norm force/BW,norm torque,norm torque/BW\n2026-05-07 09:31:55,max force test ,,SI,single,10.3841515,,,,,,,,,,\n",
+      },
+    ], "file", 1);
+
+    expect(drafts[0].testedAt).toBe("2026-07-05T09:31");
+  });
 });
 
 describe("countSessionsThisWeek", () => {

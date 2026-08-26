@@ -1,6 +1,7 @@
 import type { ParsedTrackerCsv } from "@/features/tracker/types";
 import { parseCsvRows, findTraceHeader, parseTraceRows } from "./tindeq-shared";
 import { parseEnduranceCsv } from "./endurance";
+import { parsePeakForceCsv } from "./peak-force";
 import { parseRepeaterCsv } from "./repeater";
 
 export type DetectionResult =
@@ -13,9 +14,11 @@ export function detectTindeqCsv(source: string, filename = "attempt.csv"): Detec
     const rows = parseCsvRows(source.replace(/^\uFEFF/, ""));
     const firstRow = rows[0] ?? [];
     const hasCriticalForce = firstRow.includes("critical force");
+    const hasPeakForceSummary = firstRow.includes("max weight");
     const hasRepeaterSummary = rows.some((row) => row[0] === "Avg" || row[0] === "Peak");
 
     if (hasCriticalForce) return { status: "detected", parsed: parseEnduranceCsv(source, filename) };
+    if (hasPeakForceSummary) return { status: "detected", parsed: parsePeakForceCsv(source, filename) };
     if (hasRepeaterSummary) return { status: "detected", parsed: parseRepeaterCsv(source, filename) };
 
     const traceHeaderIndex = findTraceHeader(rows);

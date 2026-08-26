@@ -1,4 +1,4 @@
-export type TrackerMode = "endurance" | "repeater" | "unsupported_trace";
+export type TrackerMode = "endurance" | "repeater" | "peak_force" | "unsupported_trace";
 
 export type TrackerMetricKey =
   | "criticalForceN"
