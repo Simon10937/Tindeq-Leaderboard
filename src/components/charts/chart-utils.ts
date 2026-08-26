@@ -1,5 +1,3 @@
-import type { TrustStatus } from "@/features/leaderboards/types";
-
 export const CHART_WIDTH = 760;
 export const CHART_HEIGHT = 320;
 export const CHART_PADDING = 44;
@@ -35,7 +33,9 @@ export function formatMetricValue(metric: { key?: string; metricKey?: string; va
 
   return `${formatScore(metric.value)} ${metric.unit}`;
 }
-export function trustLabel(value: TrustStatus) { return value === "admin_verified" ? "Admin verified" : "Self-attested"; }
+export function trustLabel() {
+  return "Self-attested";
+}
 
 export function downsampleSeries(elapsedUs: readonly number[], forceN: readonly number[], maximumPoints = CHART_WIDTH) {
   if (elapsedUs.length <= maximumPoints) return { elapsedUs, forceN };

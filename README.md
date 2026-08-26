@@ -1,23 +1,22 @@
-# Cruxboard
+# Personal Tindeq Tracker
 
-Cruxboard is a private, invite-only companion for Tindeq climbing assessments. Members upload Tindeq CSV exports against shared, immutable protocols; the application preserves private source evidence and can compare eligible results through protocol-specific leaderboards and progress charts.
+This is a bare-bones, personal tracker for CSVs exported by the Tindeq app. It is designed for mobile use and focuses on one main output: progress over time by test mode, grip, hand, and metric.
 
-The first release targets rate of force development (RFD). Ranking is intentionally disabled until `src/features/assessments/calculations/rfd-oracle-manifest.json` contains an independently calculated, reviewed, and approved numeric oracle. Uploads remain private while that gate is closed. Maximum pull, critical force, and repeater fixtures are preserved for later adapters and are not ranked.
+The supported imports are Endurance, Repeater, and Peak Force CSV exports. Each import can come from a Tindeq ZIP or CSV upload, then gets tagged with a grip type and optional hand/notes. Every saved CSV can also be inspected as a full force trace.
 
 ## Stack
 
-- Next.js App Router and TypeScript, hosted on Vercel
-- Supabase Auth, Postgres, Row Level Security, and private Storage
-- Resend for group invitation delivery
+- Next.js App Router and TypeScript
+- Browser-local persistence with IndexedDB and an in-memory fallback
+- Optional private Supabase sync for personal data across devices
 - Vitest and Playwright
 
 ## Local setup
 
 1. Install Node from `.nvmrc`, then run `npm ci`.
-2. Copy `.env.example` to `.env.local` and replace every placeholder.
-3. Start Docker, run `npx supabase start`, then `npx supabase db reset`.
-4. Run `npm run dev`.
+2. Run `npm run dev`.
+3. Open the local app on your phone or browser and import Tindeq ZIP/CSV exports.
+
+Supabase sync is optional locally. To test it, copy `.env.example` to `.env.local` and provide the Supabase values.
 
 Quality commands: `npm test`, `npm run typecheck`, `npm run lint`, `npm run build`, and `npm run test:e2e`.
-
-See [the calculation contract](docs/calculation-contract.md), [deployment runbook](docs/operations/deployment.md), and [data lifecycle runbook](docs/operations/data-lifecycle.md).
