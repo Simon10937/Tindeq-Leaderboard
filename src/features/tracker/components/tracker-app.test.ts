@@ -44,6 +44,69 @@ describe("createDraftsFromCsvFiles", () => {
     expect(drafts[0].notes).toContain("Tindeq tag: mystery grip 3kg");
   });
 
+  it("suggests a grip from a historically similar filename when tag matching is unknown", () => {
+    const historicalSession: TrackerSession = {
+      id: "history",
+      mode: "repeater",
+      parserVersion: "test",
+      filename: "repeaters_2026_06_08_22_35_Rehab HC Curl_.zip / data_set_1.csv (left)",
+      sourceSummary: "Repeater",
+      vendorMetadata: { tag: "Rehab HC Curl" },
+      metrics: [],
+      trace: { elapsedUs: [], forceN: [] },
+      warnings: [],
+      grip: "rehab hammer curl",
+      testedAt: "2026-06-08T22:35:00.000Z",
+      createdAt: "2026-06-08T22:35:00.000Z",
+    };
+    const drafts = createDraftsFromCsvFiles([
+      {
+        filename: "repeaters_2026_08_09_18_10_Rehab HC Curl_.zip / info.csv",
+        byteSize: 212,
+        source: "date,tag,comment,unit,reps,work dur.,pause btw. reps,sets,pause btw. sets,type,mvc,Work Level (% of mvc),Rest level (% of mvc)\n2026-09-08 18:10:00,Rehab HC Curl,,SI,8,10,20,1,120,single,1.8000000,80,15\n",
+      },
+      {
+        filename: "repeaters_2026_08_09_18_10_Rehab HC Curl_.zip / data_set_1.csv",
+        byteSize: 567414,
+        source: ",Overall Avg\nAvg,0.0\nPeak,0.0\n,\ntime,weight\n0.054067,0.009124040603637695\n0.065411,0.008312106132507324\n",
+      },
+    ], "file", 1, [historicalSession]);
+
+    expect(drafts[0].grip).toBe("rehab hammer curl");
+    expect(drafts[0].gripSuggestion).toContain("Suggested from");
+  });
+
+  it("does not replace a direct preset grip match with a historical suggestion", () => {
+    const drafts = createDraftsFromCsvFiles([
+      {
+        filename: "repeaters.zip / info.csv",
+        byteSize: 212,
+        source: "date,tag,comment,unit,reps,work dur.,pause btw. reps,sets,pause btw. sets,type,mvc,Work Level (% of mvc),Rest level (% of mvc)\n2026-20-08 19:55:38,half crimp 1.5kg,,SI,8,10,20,1,120,single,1.8000000,80,15\n",
+      },
+      {
+        filename: "repeaters.zip / data_set_1.csv",
+        byteSize: 567414,
+        source: ",Overall Avg\nAvg,0.0\nPeak,0.0\n,\ntime,weight\n0.054067,0.009124040603637695\n0.065411,0.008312106132507324\n",
+      },
+    ], "file", 1, [{
+      id: "history",
+      mode: "repeater",
+      parserVersion: "test",
+      filename: "repeaters.zip / data_set_1.csv",
+      sourceSummary: "Repeater",
+      vendorMetadata: {},
+      metrics: [],
+      trace: { elapsedUs: [], forceN: [] },
+      warnings: [],
+      grip: "custom old grip",
+      testedAt: "2026-06-08T22:35:00.000Z",
+      createdAt: "2026-06-08T22:35:00.000Z",
+    }]);
+
+    expect(drafts[0].grip).toBe("half crimp");
+    expect(drafts[0].gripSuggestion).toBeUndefined();
+  });
+
   it("uses peak-force CSV metadata when no info.csv is present", () => {
     const drafts = createDraftsFromCsvFiles([
       {

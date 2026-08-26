@@ -27,6 +27,7 @@ type DraftImport = Readonly<{
   expanded: boolean;
   saved?: boolean;
   unsupportedFilenames?: readonly string[];
+  gripSuggestion?: string;
 }>;
 
 type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "hand" | "notes" | "tags">>;
@@ -210,7 +211,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
 
     try {
       const csvFiles = await extractCsvFiles(files);
-      const nextDrafts = createDraftsFromCsvFiles(csvFiles, source, now);
+      const nextDrafts = createDraftsFromCsvFiles(csvFiles, source, now, sessions);
       if (nextDrafts.length === 0) {
         setStatus("No Tindeq data CSVs found. The ZIP may only contain metadata.");
         return;
@@ -735,6 +736,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                   <GripPicker
                     legend="Assign grip type"
                     value={draft.grip}
+                    hint={draft.gripSuggestion}
                     onChange={(grip) => updateDraft(draft.id, { grip })}
                   />
                   <label>Date
@@ -1000,7 +1002,7 @@ function TagEditor({
   );
 }
 
-function GripPicker({ legend, value, onChange }: Readonly<{ legend: string; value: string; onChange: (value: string) => void }>) {
+function GripPicker({ legend, value, hint, onChange }: Readonly<{ legend: string; value: string; hint?: string; onChange: (value: string) => void }>) {
   const selectedPreset = gripPresets.includes(value);
 
   return (
@@ -1025,6 +1027,7 @@ function GripPicker({ legend, value, onChange }: Readonly<{ legend: string; valu
           placeholder="e.g. 10mm edge, mono pocket, slope rail"
         />
       </label>
+      {hint && <p className="field-hint">{hint}</p>}
     </fieldset>
   );
 }
@@ -1155,7 +1158,7 @@ function clipboardFilename(type: string) {
   return "clipboard-tindeq-export.csv";
 }
 
-export function createDraftsFromCsvFiles(csvFiles: readonly ExtractedCsvFile[], source: string, now: number) {
+export function createDraftsFromCsvFiles(csvFiles: readonly ExtractedCsvFile[], source: string, now: number, historicalSessions: readonly TrackerSession[] = []) {
   const metadataByBundle = new Map<string, DraftDefaults>();
   for (const file of csvFiles) {
     if (isInfoCsv(file.filename)) {
@@ -1171,6 +1174,7 @@ export function createDraftsFromCsvFiles(csvFiles: readonly ExtractedCsvFile[], 
       index,
       now,
       metadataByBundle.get(bundleKey(file.filename)) ?? metadataByBundle.get("loose"),
+      historicalSessions,
     ))
     .reduce<DraftImport[]>((drafts, draft) => collapseUnsupportedBundleDraft(drafts, draft), []);
 }
@@ -1285,7 +1289,7 @@ function parseTindeqInfoDate(value?: string) {
   return `${year}-${month}-${day}T${hour}:${minute}`;
 }
 
-function createDraftsFromCsv(file: ExtractedCsvFile, source: string, index: number, now: number, defaults: DraftDefaults = {}) {
+function createDraftsFromCsv(file: ExtractedCsvFile, source: string, index: number, now: number, defaults: DraftDefaults = {}, historicalSessions: readonly TrackerSession[] = []) {
   const filename = file.filename.trim() || `${source}-tindeq-${index + 1}.csv`;
   const candidates = expandHandSpecificCsv(file.source, filename);
   return candidates.map((candidate, candidateIndex) => createDraftFromCsv(
@@ -1293,6 +1297,7 @@ function createDraftsFromCsv(file: ExtractedCsvFile, source: string, index: numb
     candidate.filename,
     `${source}-${index}-${candidateIndex}-${now}-${file.byteSize}`,
     { ...defaults, ...candidate.defaults },
+    historicalSessions,
   ));
 }
 
@@ -1405,19 +1410,23 @@ function csvCell(value: string) {
   return /[",\n\r]/.test(value) ? `"${value.replaceAll("\"", "\"\"")}"` : value;
 }
 
-function createDraftFromCsv(source: string, filename: string, idSuffix: string, defaults: DraftDefaults = {}): DraftImport {
+function createDraftFromCsv(source: string, filename: string, idSuffix: string, defaults: DraftDefaults = {}, historicalSessions: readonly TrackerSession[] = []): DraftImport {
   const detection = detectTindeqCsv(source, filename);
   const csvDefaults = detection.status === "invalid" ? {} : draftDefaultsFromParsedCsv(detection.parsed);
   const mergedDefaults = { ...csvDefaults, ...defaults };
+  const suggestion = detection.status === "invalid" || mergedDefaults.grip
+    ? undefined
+    : suggestGripFromHistory(filename, detection.parsed, mergedDefaults, historicalSessions);
   const base = {
     id: `${filename}-${idSuffix}`,
     filename,
-    grip: mergedDefaults.grip ?? "",
+    grip: mergedDefaults.grip ?? suggestion?.grip ?? "",
     testedAt: mergedDefaults.testedAt ?? new Date().toISOString().slice(0, 16),
     hand: mergedDefaults.hand ?? "",
     notes: mergedDefaults.notes ?? "",
     tags: mergedDefaults.tags ?? [],
     expanded: true,
+    gripSuggestion: suggestion?.reason,
   };
   if (detection.status === "invalid") return { ...base, error: detection.error };
   return {
@@ -1438,6 +1447,52 @@ function draftDefaultsFromParsedCsv(parsed: ParsedTrackerCsv): DraftDefaults {
     testedAt: parseTindeqInfoDate(parsed.vendorMetadata.date),
     notes: notes || undefined,
   };
+}
+
+function suggestGripFromHistory(filename: string, parsed: ParsedTrackerCsv, defaults: DraftDefaults, sessions: readonly TrackerSession[]) {
+  const sourceTokens = gripSuggestionTokens([filename, parsed.vendorMetadata.tag, parsed.vendorMetadata.comment, defaults.notes]);
+  if (sourceTokens.size === 0) return undefined;
+
+  const ranked = sessions
+    .map((session) => ({
+      session,
+      score: tokenSimilarity(sourceTokens, gripSuggestionTokens([
+        session.filename,
+        session.vendorMetadata.tag,
+        session.vendorMetadata.comment,
+        session.notes,
+        ...(session.tags ?? []),
+      ])),
+    }))
+    .filter((item) => item.session.grip.trim() && item.score >= 0.34)
+    .sort((a, b) => b.score - a.score || Date.parse(b.session.testedAt) - Date.parse(a.session.testedAt));
+
+  const match = ranked[0];
+  if (!match) return undefined;
+  return {
+    grip: match.session.grip,
+    reason: `Suggested from ${formatCompactDate(match.session.testedAt)} ${match.session.filename}.`,
+  };
+}
+
+function gripSuggestionTokens(values: readonly (string | undefined)[]) {
+  const stopWords = new Set(["csv", "zip", "data", "set", "info", "left", "right", "both", "single", "repeaters", "repeater", "peakforce", "peak", "force", "tindeq"]);
+  const tokens = values
+    .join(" ")
+    .toLowerCase()
+    .replace(/\b\d{4}[-_]\d{2}[-_]\d{2}(?:[-_]\d{2}[-_]\d{2}(?:[-_]\d{2})?)?\b/g, " ")
+    .replace(/\bdata_set_\d+\b/g, " ")
+    .replace(/\b\d+(?:\.\d+)?\s*kg\b/g, " ")
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2 && !stopWords.has(token) && !/^\d+$/.test(token));
+  return new Set(tokens);
+}
+
+function tokenSimilarity(a: ReadonlySet<string>, b: ReadonlySet<string>) {
+  if (a.size === 0 || b.size === 0) return 0;
+  const intersection = [...a].filter((token) => b.has(token)).length;
+  return intersection / Math.min(a.size, b.size);
 }
 
 function modeLabel(mode?: TrackerMode) {

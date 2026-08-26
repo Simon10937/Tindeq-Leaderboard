@@ -549,6 +549,12 @@ textarea {
   resize: vertical;
 }
 
+.field-hint {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin: 0;
+}
+
 .draft-list {
   display: grid;
   gap: 12px;
