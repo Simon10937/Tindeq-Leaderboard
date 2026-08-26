@@ -34,6 +34,7 @@ type SelectedMetric = "all" | TrackerMetricKey;
 type AvailableMetric = Extract<TrackerSession["metrics"][number], { available: true }>;
 type ActiveTab = "progress" | "import" | "history";
 type ChartMode = Extract<TrackerMode, "endurance" | "repeater" | "peak_force">;
+type HandFilter = "all" | "left" | "right" | "both";
 type SessionEditState = Readonly<{ sessionId: string; context: ImportContext }>;
 type MetricOption = Readonly<{ key: TrackerMetricKey; label: string; mode?: TrackerMode }>;
 type StorageMode = "local" | "supabase";
@@ -67,6 +68,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const [selectedMetric, setSelectedMetric] = useState<SelectedMetric>("all");
   const [modeFilter, setModeFilter] = useState<ChartMode>("repeater");
   const [gripFilter, setGripFilter] = useState("all");
+  const [handFilter, setHandFilter] = useState<HandFilter>("all");
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
   const [status, setStatus] = useState<string | undefined>();
   const [reimportNoticeCount, setReimportNoticeCount] = useState(0);
@@ -443,9 +445,12 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const gripOptions = useMemo(() => gripOptionsForMode(sessions, effectiveModeFilter), [effectiveModeFilter, sessions]);
   const effectiveGripFilter = resolveGripFilter(gripFilter, gripOptions);
 
-  const filteredSessions = sessions.filter((session) =>
+  const modeGripSessions = sessions.filter((session) =>
     session.mode === effectiveModeFilter &&
     session.grip === effectiveGripFilter);
+  const handOptions = useMemo(() => handOptionsForSessions(modeGripSessions), [modeGripSessions]);
+  const effectiveHandFilter = resolveHandFilter(handFilter, handOptions);
+  const filteredSessions = modeGripSessions.filter((session) => sessionMatchesHandFilter(session, effectiveHandFilter));
   const historySessions = sessions;
   const metricAvailability = useMemo(() => summarizeMetricAvailability(filteredSessions), [filteredSessions]);
   const modeMetricOptions = metricOptionsForMode(effectiveModeFilter);
@@ -522,6 +527,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                   setModeFilter(mode);
                   setSelectedMetric("all");
                   setGripFilter("");
+                  setHandFilter("all");
                 }}
               >
                 {modeLabel(mode)}
@@ -556,12 +562,29 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                 className={effectiveGripFilter === grip ? "chip chip-selected" : "chip"}
                 key={grip}
                 type="button"
-                onClick={() => setGripFilter(grip)}
+                onClick={() => {
+                  setGripFilter(grip);
+                  setHandFilter("all");
+                }}
               >
                 {grip}
               </button>
             ))}
           </div>
+          {handOptions.length > 1 && (
+            <div className="chip-list plot-chip-list" aria-label="Hand">
+              {handOptions.map((hand) => (
+                <button
+                  className={effectiveHandFilter === hand ? "chip chip-selected" : "chip"}
+                  key={hand}
+                  type="button"
+                  onClick={() => setHandFilter(hand)}
+                >
+                  {handFilterLabel(hand)}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {reimportNoticeCount > 0 && <p className="notice">{reimportNoticeCount} saved session{reimportNoticeCount === 1 ? "" : "s"} need re-import before all trace-derived force metrics can be derived.</p>}
         <div className="stat-grid stat-grid-compact progress-stat-grid">
@@ -1552,6 +1575,31 @@ export function resolveGripFilter(gripFilter: string, gripOptions: readonly stri
   return gripOptions.includes(gripFilter) ? gripFilter : gripOptions[0] ?? "";
 }
 
+export function handOptionsForSessions(sessions: readonly TrackerSession[]): HandFilter[] {
+  const hands = new Set(sessions.map((session) => session.hand ?? "both"));
+  const options: HandFilter[] = ["all"];
+  if (hands.has("left")) options.push("left");
+  if (hands.has("right")) options.push("right");
+  if (hands.has("both")) options.push("both");
+  return options;
+}
+
+export function resolveHandFilter(handFilter: HandFilter, handOptions: readonly HandFilter[]) {
+  return handOptions.includes(handFilter) ? handFilter : "all";
+}
+
+function sessionMatchesHandFilter(session: TrackerSession, handFilter: HandFilter) {
+  if (handFilter === "all") return true;
+  return (session.hand ?? "both") === handFilter;
+}
+
+function handFilterLabel(handFilter: HandFilter) {
+  if (handFilter === "all") return "Both hands";
+  if (handFilter === "left") return "Left";
+  if (handFilter === "right") return "Right";
+  return "Unspecified";
+}
+
 function availableMetricText(parsed?: ParsedTrackerCsv) {
   if (!parsed) return "No metrics";
   const available = parsed.metrics.filter((metric) => metric.available);
@@ -1713,6 +1761,6 @@ function summarizeProgressPoints(points: readonly ProgressPoint[]) {
 }
 
 function progressSeriesKey(point: ProgressPoint) {
-  const handKey = point.mode === "peak_force" ? "any" : point.hand ?? "any";
+  const handKey = point.hand ?? "both";
   return [point.mode, point.grip, handKey, point.metricKey].join(":");
 }

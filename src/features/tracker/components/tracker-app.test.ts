@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authDescription, countSessionsThisWeek, createDraftsFromCsvFiles, gripOptionsForMode, latestComparableChange, localUploadConflictMessage, localUploadFailureMessage, localUploadPromptMessage, normalizeWeeklyTarget, resetConfirmationMessage, resetStatusMessage, resolveGripFilter, shouldIgnoreSignedInAuthEvent, supabaseReadyMessage, uploadLocalSessions, visibleSessionTags } from "./tracker-app";
+import { authDescription, countSessionsThisWeek, createDraftsFromCsvFiles, gripOptionsForMode, handOptionsForSessions, latestComparableChange, localUploadConflictMessage, localUploadFailureMessage, localUploadPromptMessage, normalizeWeeklyTarget, resetConfirmationMessage, resetStatusMessage, resolveGripFilter, resolveHandFilter, shouldIgnoreSignedInAuthEvent, supabaseReadyMessage, uploadLocalSessions, visibleSessionTags } from "./tracker-app";
 import type { TrackerSession } from "@/features/tracker/types";
 
 describe("createDraftsFromCsvFiles", () => {
@@ -388,15 +388,44 @@ describe("gripOptionsForMode", () => {
   });
 });
 
+describe("handOptionsForSessions", () => {
+  const baseSession: TrackerSession = {
+    id: "base",
+    mode: "repeater",
+    parserVersion: "test",
+    filename: "test.csv",
+    sourceSummary: "Repeater",
+    vendorMetadata: {},
+    metrics: [],
+    trace: { elapsedUs: [], forceN: [] },
+    warnings: [],
+    grip: "half crimp",
+    testedAt: "2026-08-24T12:00:00.000Z",
+    createdAt: "2026-08-24T12:00:00.000Z",
+  };
+
+  it("offers all plus concrete hand choices represented by the current sessions", () => {
+    expect(handOptionsForSessions([
+      { ...baseSession, id: "left", hand: "left" },
+      { ...baseSession, id: "right", hand: "right" },
+      { ...baseSession, id: "unknown" },
+    ])).toEqual(["all", "left", "right", "both"]);
+  });
+
+  it("falls back to all when the selected hand is not represented", () => {
+    expect(resolveHandFilter("left", ["all", "right"])).toBe("all");
+    expect(resolveHandFilter("right", ["all", "right"])).toBe("right");
+  });
+});
+
 describe("latestComparableChange", () => {
-  it("compares peak-force points across hand metadata for the same grip", () => {
+  it("keeps peak-force comparisons hand-specific", () => {
     const change = latestComparableChange([
-      { sessionId: "manual", mode: "peak_force", grip: "half crimp", testedAt: "2026-08-24T12:00:00.000Z", metricKey: "peakForceN", label: "Max force", value: 39.2266, unit: "N" },
+      { sessionId: "manual", mode: "peak_force", grip: "half crimp", hand: "left", testedAt: "2026-08-24T12:00:00.000Z", metricKey: "peakForceN", label: "Max force", value: 39.2266, unit: "N" },
       { sessionId: "upload", mode: "peak_force", grip: "half crimp", hand: "right", testedAt: "2026-08-26T11:42:00.000Z", metricKey: "peakForceN", label: "Max force", value: 48.249, unit: "N" },
     ]);
 
-    expect(change?.previous.sessionId).toBe("manual");
-    expect(change?.delta).toBeCloseTo(9.0224);
+    expect(change).toBeUndefined();
   });
 
   it("keeps hand-specific comparisons for repeater and endurance points", () => {
