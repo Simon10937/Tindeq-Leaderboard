@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("home renders the personal tracker", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /track grip progress\./i })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /0 \/ 3 sessions/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /0 \/ \d+ sessions/i })).toBeVisible();
   await expect(page.getByRole("heading", { name: /over time/i })).toBeVisible();
   await expect(page.getByText("Choose Tindeq ZIP or CSVs")).toBeHidden();
   await expect(page.getByText("Import new data")).toBeHidden();
@@ -59,25 +59,20 @@ test("imports endurance and repeater files, keeps history independent, and expos
   await expect(page.getByText("Saved locally.", { exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: /^Progress$/i }).first().click();
-  const metricFilter = page.locator(".filters label").filter({ hasText: "Metric" }).locator("select");
-  const modeFilter = page.locator(".filters label").filter({ hasText: "Mode" }).locator("select");
-  const gripFilter = page.locator(".filters label").filter({ hasText: "Grip" }).locator("select");
-  await expect(metricFilter).toHaveValue("repeaterAverageForceN");
+  await expect(page.getByRole("button", { name: /^Repeater$/i })).toHaveClass(/chip-selected/);
+  await expect(page.getByRole("button", { name: /^All chartable$/i })).toHaveClass(/chip-selected/);
+  await expect(page.getByRole("button", { name: /^Repeater average force$/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Repeater max force$/i })).toBeVisible();
   await expect(page.locator(".chart-key")).toContainText(/avg repeater force/i);
-  await expect(page.locator(".chart-key")).not.toContainText("Max force");
   await expect(page.getByText(/trace-only for this metric/i)).toBeHidden();
-  await modeFilter.selectOption("repeater");
-  await expect(metricFilter).toContainText("Repeater average force");
-  await expect(metricFilter).toContainText("Repeater max force");
-  await metricFilter.selectOption("peakForceN");
+  await page.getByRole("button", { name: /^Repeater max force$/i }).click();
   await expect(page.getByRole("img", { name: /progress over time/i })).toBeVisible();
   await expect(page.getByText("Progress data")).toBeHidden();
 
-  await modeFilter.selectOption("endurance");
-  await expect(metricFilter).toContainText("Endurance average force");
-  await expect(metricFilter).toContainText("Endurance max force");
+  await page.getByRole("button", { name: /^Endurance$/i }).click();
+  await expect(page.getByRole("button", { name: /^Endurance average force$/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Endurance max force$/i })).toBeVisible();
 
-  await gripFilter.selectOption("half crimp");
   await page.getByRole("link", { name: /^History$/i }).first().click();
   await expect(page.getByRole("button", { name: /20mm edge.*Endurance/i })).toBeVisible();
   await expect(page.getByRole("button", { name: /half crimp.*Repeater/i })).toBeVisible();

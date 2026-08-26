@@ -5,6 +5,7 @@ const DB_VERSION = 1;
 const STORE_NAME = "sessions";
 
 export type TrackerStore = Readonly<{
+  create(session: TrackerSession): Promise<TrackerSession>;
   save(session: TrackerSession): Promise<TrackerSession>;
   list(): Promise<TrackerSession[]>;
   get(id: string): Promise<TrackerSession | undefined>;
@@ -21,6 +22,10 @@ export function createMemoryTrackerStore(initial: readonly TrackerSession[] = []
   const sessions = new Map(initial.map((session) => [session.id, session]));
 
   return {
+    async create(session) {
+      sessions.set(session.id, session);
+      return session;
+    },
     async save(session) {
       sessions.set(session.id, session);
       return session;
@@ -42,6 +47,12 @@ export function createMemoryTrackerStore(initial: readonly TrackerSession[] = []
 
 function createIndexedDbTrackerStore(): TrackerStore {
   return {
+    async create(session) {
+      const database = await openDatabase();
+      await requestToPromise(database.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).add(session));
+      database.close();
+      return session;
+    },
     async save(session) {
       const database = await openDatabase();
       await requestToPromise(database.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).put(session));

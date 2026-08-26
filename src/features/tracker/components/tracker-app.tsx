@@ -35,6 +35,11 @@ type ActiveTab = "progress" | "import" | "history";
 type ChartMode = Extract<TrackerMode, "endurance" | "repeater" | "peak_force">;
 type SessionEditState = Readonly<{ sessionId: string; context: ImportContext }>;
 type MetricOption = Readonly<{ key: TrackerMetricKey; label: string; mode?: TrackerMode }>;
+type StorageMode = "local" | "supabase";
+type SyncPrompt = Readonly<{ userId: string; localSessionCount: number }>;
+type AuthDescriptionState =
+  | { status: "local" | "checking" | "signed-out" }
+  | { status: "signed-in"; email?: string };
 
 const metricOptions: MetricOption[] = [
   { key: "criticalForceN", label: "Critical force", mode: "endurance" },
@@ -54,6 +59,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const storeRef = useRef<TrackerStore | null>(null);
   const supabaseRef = useRef<ReturnType<typeof createTrackerSupabaseClient>>(undefined);
   const refreshGenerationRef = useRef(0);
+  const activeSupabaseUserRef = useRef<string | undefined>(undefined);
   const [sessions, setSessions] = useState<TrackerSession[]>([]);
   const [drafts, setDrafts] = useState<DraftImport[]>([]);
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => typeof window === "undefined" ? initialTab : readActiveTabFromLocation(initialTab));
@@ -65,6 +71,8 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const [reimportNoticeCount, setReimportNoticeCount] = useState(0);
   const [weeklyTarget, setWeeklyTarget] = useState(3);
   const [authState, setAuthState] = useState<TrackerAuthState>({ status: "checking" });
+  const [storageMode, setStorageMode] = useState<StorageMode>("local");
+  const [syncPrompt, setSyncPrompt] = useState<SyncPrompt>();
   const [authEmail, setAuthEmail] = useState("");
   const [draftTagInputs, setDraftTagInputs] = useState<Record<string, string>>({});
   const [sessionEdit, setSessionEdit] = useState<SessionEditState>();
@@ -114,10 +122,10 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
     return () => window.clearTimeout(timeoutId);
   }, []);
 
-  async function refreshSessions(store = storeRef.current) {
+  async function refreshSessions(store = storeRef.current, preloadedSessions?: readonly TrackerSession[]) {
     if (!store) return;
     const generation = ++refreshGenerationRef.current;
-    const storedSessions = await store.list();
+    const storedSessions = preloadedSessions ?? await store.list();
     const normalized = storedSessions
       .map((session) => augmentStoredRepeaterMetrics(normalizeStoredTrackerSession(session)))
       .map((result) => {
@@ -232,9 +240,9 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
       await store.save(buildTrackerSession(draft.parsed, validation.context));
       await refreshSessions(store);
       setDrafts((current) => current.map((item) => item.id === draft.id ? { ...item, saved: true, expanded: false } : item));
-      setStatus(`${draft.filename} saved ${saveDestinationLabel(authState)}.`);
+      setStatus(`${draft.filename} saved ${saveDestinationLabel(storageMode)}.`);
     } catch (error) {
-      setStatus(saveFailureMessage(authState, error));
+      setStatus(saveFailureMessage(storageMode, error));
     }
   }
 
@@ -263,37 +271,77 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   async function signOutTracker() {
     const supabase = supabaseRef.current;
     if (supabase) await supabase.auth.signOut();
+    setSyncPrompt(undefined);
     await activateLocalTrackerStore("Signed out. Showing local browser data.");
   }
 
   async function applyAuthState(nextAuthState: TrackerAuthState) {
     setAuthState(nextAuthState);
     if (nextAuthState.status === "signed-in" && nextAuthState.user) {
-      await activateSupabaseTrackerStore(nextAuthState.user.id);
+      if (shouldIgnoreSignedInAuthEvent(activeSupabaseUserRef.current, nextAuthState.user.id)) return;
+      await prepareSupabaseTrackerStore(nextAuthState.user.id);
       return;
     }
 
+    setSyncPrompt(undefined);
+    activeSupabaseUserRef.current = undefined;
     await activateLocalTrackerStore(undefined);
   }
 
-  async function activateSupabaseTrackerStore(userId: string) {
+  async function prepareSupabaseTrackerStore(userId: string) {
+    const localStore = localStoreRef.current;
+    if (!localStore) return;
+    const localSessions = await localStore.list();
+    if (localSessions.length > 0) {
+      setSyncPrompt({ userId, localSessionCount: localSessions.length });
+      await refreshSessions(localStore, localSessions);
+      setStatus(localUploadPromptMessage(localSessions.length));
+      return;
+    }
+
+    await switchToSupabaseWithoutLocalUpload(userId);
+  }
+
+  async function uploadLocalSessionsToSupabase() {
+    if (!syncPrompt) return;
+    await activateSupabaseTrackerStore(syncPrompt.userId, true);
+  }
+
+  async function switchToSupabaseWithoutLocalUpload(userId = syncPrompt?.userId) {
+    if (!userId) return;
+    await activateSupabaseTrackerStore(userId, false);
+  }
+
+  async function activateSupabaseTrackerStore(userId: string, uploadLocal: boolean) {
     const supabase = supabaseRef.current;
     const localStore = localStoreRef.current;
     if (!supabase || !localStore) return;
 
     const remoteStore = createSupabaseTrackerStore(supabase, userId);
+    const localSessions = uploadLocal ? await localStore.list() : [];
+    if (uploadLocal && localSessions.length > 0) {
+      setStatus("Uploading local tracker sessions to Supabase...");
+      const uploadResult = await uploadLocalSessions(localSessions, remoteStore);
+      if (!uploadResult.ok) {
+        setSyncPrompt({ userId, localSessionCount: localSessions.length });
+        await activateLocalTrackerStore(uploadIssueMessage(uploadResult, localSessions.length));
+        return;
+      }
+    }
+
+    setSyncPrompt(undefined);
+    activeSupabaseUserRef.current = userId;
     storeRef.current = remoteStore;
-    setStatus("Syncing local tracker sessions to Supabase...");
-    const localSessions = await localStore.list();
-    await Promise.all(localSessions.map((session) => remoteStore.save(session)));
+    setStorageMode("supabase");
     await refreshSessions(remoteStore);
-    setStatus(`Supabase tracker ready${localSessions.length > 0 ? `; synced ${localSessions.length} local session${localSessions.length === 1 ? "" : "s"}.` : "."}`);
+    setStatus(supabaseReadyMessage(uploadLocal ? localSessions.length : 0));
   }
 
   async function activateLocalTrackerStore(nextStatus: string | undefined) {
     const localStore = localStoreRef.current;
     if (!localStore) return;
     storeRef.current = localStore;
+    setStorageMode("local");
     await refreshSessions(localStore);
     setStatus(nextStatus);
   }
@@ -310,14 +358,14 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   }
 
   async function resetAll() {
-    if (!window.confirm("Delete all local Tindeq tracker data from this browser?")) return;
+    if (!window.confirm(resetConfirmationMessage(storageMode))) return;
     const store = storeRef.current;
     if (!store) return;
     refreshGenerationRef.current += 1;
     await store.clear();
     await refreshSessions(store);
     setSelectedSessionId(undefined);
-    setStatus("Local tracker data cleared.");
+    setStatus(resetStatusMessage(storageMode));
   }
 
   function updateWeeklyTarget(value: number) {
@@ -379,7 +427,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
       cancelSessionEdit();
       setStatus("Session updated.");
     } catch (error) {
-      setStatus(saveFailureMessage(authState, error));
+      setStatus(saveFailureMessage(storageMode, error));
     }
   }
 
@@ -586,14 +634,22 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
           </section>
         )}
 
-        {activeTab === "progress" && authState.status !== "local" && <section className="tracker-panel auth-panel compact-panel" aria-labelledby="auth-title">
+        {(syncPrompt || activeTab === "progress") && authState.status !== "local" && <section className="tracker-panel auth-panel compact-panel" aria-labelledby="auth-title">
           <div>
             <p className="eyebrow">Private data</p>
             <h2 id="auth-title">{authTitle(authState)}</h2>
-            <p>{authDescription(authState)}</p>
+            <p>{authDescription(toAuthDescriptionState(authState), syncPrompt, storageMode)}</p>
           </div>
           {authState.status === "signed-in" ? (
-            <button className="button button-secondary" type="button" onClick={() => void signOutTracker()}>Sign out</button>
+            <div className="auth-actions">
+              {syncPrompt && (
+                <>
+                  <button className="button" type="button" onClick={() => void uploadLocalSessionsToSupabase()}>Upload local sessions</button>
+                  <button className="button button-secondary" type="button" onClick={() => void switchToSupabaseWithoutLocalUpload()}>Use Supabase only</button>
+                </>
+              )}
+              <button className="button button-secondary" type="button" onClick={() => void signOutTracker()}>Sign out</button>
+            </div>
           ) : (
             <div className="auth-actions">
               <label>Email
@@ -691,11 +747,11 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                     onRemove={(tag) => updateDraft(draft.id, { tags: draft.tags.filter((item) => item !== tag) })}
                   />
                   <button className="button" type="button" onClick={() => void saveDraft(draft)}>
-                    {authState.status === "signed-in" ? "Save to Supabase" : "Save local session"}
+                    {storageMode === "supabase" ? "Save to Supabase" : "Save local session"}
                   </button>
                 </div>
               )}
-              {draft.saved && <p className="notice compact-notice" role="status">Saved {authState.status === "signed-in" ? "to Supabase" : "locally"}.</p>}
+              {draft.saved && <p className="notice compact-notice" role="status">Saved {storageMode === "supabase" ? "to Supabase" : "locally"}.</p>}
             </article>
           ))}
         </section>
@@ -1206,21 +1262,112 @@ function authTitle(authState: TrackerAuthState) {
   return "Supabase sync off";
 }
 
-function authDescription(authState: TrackerAuthState) {
-  if (authState.status === "signed-in") return authState.user?.email ? `Signed in as ${authState.user.email}. New sessions save to Supabase.` : "Signed in. New sessions save to Supabase.";
+function toAuthDescriptionState(authState: TrackerAuthState): AuthDescriptionState {
+  if (authState.status === "signed-in") return { status: "signed-in", email: authState.user?.email };
+  return { status: authState.status };
+}
+
+export function authDescription(authState: AuthDescriptionState, syncPrompt?: SyncPrompt, storageMode: StorageMode = "local") {
+  if (authState.status === "signed-in" && syncPrompt) {
+    return `${localUploadPromptMessage(syncPrompt.localSessionCount)} Until you choose, new sessions save locally in this browser.`;
+  }
+  if (authState.status === "signed-in" && storageMode === "supabase") {
+    return authState.email ? `Signed in as ${authState.email}. New sessions save to Supabase.` : "Signed in. New sessions save to Supabase.";
+  }
+  if (authState.status === "signed-in") {
+    return authState.email ? `Signed in as ${authState.email}. New sessions are still saving locally in this browser.` : "Signed in. New sessions are still saving locally in this browser.";
+  }
   if (authState.status === "checking") return "Looking for an existing Supabase session.";
   if (authState.status === "local") return "Local demo mode is enabled, so sessions stay in this browser.";
   return "Sign in with your pre-created Supabase user to save sessions privately across devices.";
 }
 
-function saveDestinationLabel(authState: TrackerAuthState) {
-  return authState.status === "signed-in" ? "to Supabase" : "locally";
+export function shouldIgnoreSignedInAuthEvent(activeSupabaseUserId: string | undefined, nextUserId: string) {
+  return activeSupabaseUserId === nextUserId;
 }
 
-function saveFailureMessage(authState: TrackerAuthState, error: unknown) {
-  const destination = authState.status === "signed-in" ? "Supabase" : "local storage";
+export function localUploadPromptMessage(localSessionCount: number) {
+  return `You have ${sessionLabel(localSessionCount)} in this browser. Upload them to Supabase to keep that data with your account, or use Supabase only to leave them local.`;
+}
+
+export function localUploadFailureMessage(failedCount: number, totalCount: number) {
+  return `Could not upload ${failedCount} of ${sessionLabel(totalCount)}. Your browser data is still local and has not been cleared.`;
+}
+
+export function localUploadConflictMessage(conflictCount: number, totalCount: number) {
+  return `Did not upload ${conflictCount} of ${sessionLabel(totalCount)} because matching Supabase sessions already exist with different data. Your browser data is still local and has not been cleared.`;
+}
+
+export function supabaseReadyMessage(uploadedCount: number) {
+  return `Supabase tracker ready${uploadedCount > 0 ? `; uploaded ${sessionLabel(uploadedCount)}.` : "."}`;
+}
+
+export async function uploadLocalSessions(localSessions: readonly TrackerSession[], remoteStore: Pick<TrackerStore, "create" | "get">) {
+  const uploadChecks = await Promise.allSettled(localSessions.map(async (session) => {
+    const remoteSession = await remoteStore.get(session.id);
+    return { session, remoteSession };
+  }));
+  const sessionsToSave: TrackerSession[] = [];
+  let failedCount = 0;
+  let conflictCount = 0;
+
+  for (const check of uploadChecks) {
+    if (check.status === "rejected") {
+      failedCount += 1;
+      continue;
+    }
+    if (!check.value.remoteSession) {
+      sessionsToSave.push(check.value.session);
+      continue;
+    }
+    if (!sessionsMatch(check.value.session, check.value.remoteSession)) {
+      conflictCount += 1;
+    }
+  }
+
+  const saveResults = await Promise.allSettled(sessionsToSave.map((session) => remoteStore.create(session)));
+  failedCount += saveResults.filter((result) => result.status === "rejected").length;
+  return failedCount > 0 || conflictCount > 0 ? { ok: false as const, failedCount, conflictCount } : { ok: true as const };
+}
+
+function uploadIssueMessage(uploadResult: Exclude<Awaited<ReturnType<typeof uploadLocalSessions>>, { ok: true }>, totalCount: number) {
+  if (uploadResult.conflictCount > 0) return localUploadConflictMessage(uploadResult.conflictCount, totalCount);
+  return localUploadFailureMessage(uploadResult.failedCount, totalCount);
+}
+
+function sessionsMatch(a: TrackerSession, b: TrackerSession) {
+  return stableStringify(a) === stableStringify(b);
+}
+
+function stableStringify(value: unknown): string {
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  const entries = Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
+}
+
+function sessionLabel(count: number) {
+  return `${count} local session${count === 1 ? "" : "s"}`;
+}
+
+function saveDestinationLabel(storageMode: StorageMode) {
+  return storageMode === "supabase" ? "to Supabase" : "locally";
+}
+
+function saveFailureMessage(storageMode: StorageMode, error: unknown) {
+  const destination = storageMode === "supabase" ? "Supabase" : "local storage";
   const detail = error instanceof Error && error.message ? `: ${error.message}` : ".";
   return `Could not save to ${destination}${detail}`;
+}
+
+export function resetConfirmationMessage(storageMode: StorageMode) {
+  return storageMode === "supabase"
+    ? "Delete all Supabase tracker data for this signed-in account?"
+    : "Delete all local Tindeq tracker data from this browser?";
+}
+
+export function resetStatusMessage(storageMode: StorageMode) {
+  return storageMode === "supabase" ? "Supabase tracker data cleared for this account." : "Local tracker data cleared.";
 }
 
 export function visibleSessionTags(session: TrackerSession) {

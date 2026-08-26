@@ -18,6 +18,16 @@ describe("getPublicEnv", () => {
     expect(() => getPublicEnv({})).toThrow("Invalid public Supabase configuration");
   });
 
+  it("fails clearly when copied placeholder values are used outside local demo mode", () => {
+    expect(() =>
+      getPublicEnv({
+        NEXT_PUBLIC_LOCAL_DEMO: "false",
+        NEXT_PUBLIC_SUPABASE_URL: "https://your-project.supabase.co",
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_replace_me",
+      }),
+    ).toThrow("must be real project values");
+  });
+
   it("allows placeholder Supabase config in local demo mode", () => {
     expect(getPublicEnv({ NEXT_PUBLIC_LOCAL_DEMO: "true" })).toEqual({
       NEXT_PUBLIC_LOCAL_DEMO: "true",

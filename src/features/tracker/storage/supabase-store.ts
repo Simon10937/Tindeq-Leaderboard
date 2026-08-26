@@ -27,6 +27,11 @@ export async function readTrackerAuthState(client: SupabaseClient | undefined): 
 
 export function createSupabaseTrackerStore(client: SupabaseClient, userId: string): TrackerStore {
   return {
+    async create(session) {
+      const { error } = await client.from("tracker_sessions").insert(trackerSessionToSupabaseRow(session, userId));
+      if (error) throw new Error(error.message);
+      return session;
+    },
     async save(session) {
       const { error } = await client.from("tracker_sessions").upsert(trackerSessionToSupabaseRow(session, userId));
       if (error) throw new Error(error.message);
