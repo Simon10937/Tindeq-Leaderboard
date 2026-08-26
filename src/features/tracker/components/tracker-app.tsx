@@ -1304,16 +1304,13 @@ function latestProgressPoint(points: readonly ProgressPoint[]) {
   return [...points].sort((a, b) => Date.parse(b.testedAt) - Date.parse(a.testedAt))[0];
 }
 
-function latestComparableChange(points: readonly ProgressPoint[]) {
+export function latestComparableChange(points: readonly ProgressPoint[]) {
   const latest = latestProgressPoint(points);
   if (!latest) return undefined;
   const previous = [...points]
     .filter((point) =>
       point.sessionId !== latest.sessionId &&
-      point.mode === latest.mode &&
-      point.grip === latest.grip &&
-      (point.hand ?? "") === (latest.hand ?? "") &&
-      point.metricKey === latest.metricKey &&
+      progressSeriesKey(point) === progressSeriesKey(latest) &&
       Date.parse(point.testedAt) <= Date.parse(latest.testedAt))
     .sort((a, b) => Date.parse(b.testedAt) - Date.parse(a.testedAt))[0];
   if (!previous) return undefined;

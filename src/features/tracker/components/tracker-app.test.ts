@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countSessionsThisWeek, createDraftsFromCsvFiles, gripOptionsForMode, normalizeWeeklyTarget, resolveGripFilter, visibleSessionTags } from "./tracker-app";
+import { countSessionsThisWeek, createDraftsFromCsvFiles, gripOptionsForMode, latestComparableChange, normalizeWeeklyTarget, resolveGripFilter, visibleSessionTags } from "./tracker-app";
 import type { TrackerSession } from "@/features/tracker/types";
 
 describe("createDraftsFromCsvFiles", () => {
@@ -161,5 +161,26 @@ describe("gripOptionsForMode", () => {
     expect(resolveGripFilter("", options)).toBe("half crimp");
     expect(resolveGripFilter("all", options)).toBe("half crimp");
     expect(resolveGripFilter("single finger", options)).toBe("single finger");
+  });
+});
+
+describe("latestComparableChange", () => {
+  it("compares peak-force points across hand metadata for the same grip", () => {
+    const change = latestComparableChange([
+      { sessionId: "manual", mode: "peak_force", grip: "half crimp", testedAt: "2026-08-24T12:00:00.000Z", metricKey: "peakForceN", label: "Max force", value: 39.2266, unit: "N" },
+      { sessionId: "upload", mode: "peak_force", grip: "half crimp", hand: "right", testedAt: "2026-08-26T11:42:00.000Z", metricKey: "peakForceN", label: "Max force", value: 48.249, unit: "N" },
+    ]);
+
+    expect(change?.previous.sessionId).toBe("manual");
+    expect(change?.delta).toBeCloseTo(9.0224);
+  });
+
+  it("keeps hand-specific comparisons for repeater and endurance points", () => {
+    const change = latestComparableChange([
+      { sessionId: "left", mode: "repeater", grip: "half crimp", hand: "left", testedAt: "2026-08-24T12:00:00.000Z", metricKey: "peakForceN", label: "Max force", value: 39.2266, unit: "N" },
+      { sessionId: "right", mode: "repeater", grip: "half crimp", hand: "right", testedAt: "2026-08-26T11:42:00.000Z", metricKey: "peakForceN", label: "Max force", value: 48.249, unit: "N" },
+    ]);
+
+    expect(change).toBeUndefined();
   });
 });
