@@ -46,7 +46,7 @@ const metricOptions: MetricOption[] = [
 ];
 
 const gripPresets = ["20mm edge", "15mm edge", "half crimp", "rehab half crimp", "open hand", "pinch", "jug"];
-const tagPresets = ["rehab", "max effort", "repeaters", "endurance", "skin", "warm-up", "block weight"];
+const tagPresets = ["rehab", "max effort", "repeaters", "endurance", "single finger", "skin", "warm-up", "block weight"];
 const weeklyTargetStorageKey = "tindeq-tracker-weekly-target";
 
 export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: ActiveTab }>) {
@@ -228,10 +228,14 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
       return;
     }
 
-    await store.save(buildTrackerSession(draft.parsed, validation.context));
-    await refreshSessions(store);
-    setDrafts((current) => current.map((item) => item.id === draft.id ? { ...item, saved: true, expanded: false } : item));
-    setStatus(`${draft.filename} saved ${authState.status === "signed-in" ? "to Supabase" : "locally"}.`);
+    try {
+      await store.save(buildTrackerSession(draft.parsed, validation.context));
+      await refreshSessions(store);
+      setDrafts((current) => current.map((item) => item.id === draft.id ? { ...item, saved: true, expanded: false } : item));
+      setStatus(`${draft.filename} saved ${saveDestinationLabel(authState)}.`);
+    } catch (error) {
+      setStatus(saveFailureMessage(authState, error));
+    }
   }
 
   async function requestMagicLink() {
@@ -368,11 +372,15 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
     }
 
     const updated = updateTrackerSessionMetadata(session, validation.context);
-    await store.save(updated);
-    await refreshSessions(store);
-    setSelectedSessionId(updated.id);
-    cancelSessionEdit();
-    setStatus("Session updated.");
+    try {
+      await store.save(updated);
+      await refreshSessions(store);
+      setSelectedSessionId(updated.id);
+      cancelSessionEdit();
+      setStatus("Session updated.");
+    } catch (error) {
+      setStatus(saveFailureMessage(authState, error));
+    }
   }
 
   const tagSuggestions = useMemo(() => Array.from(new Set([
@@ -683,7 +691,9 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                     onAdd={(tag) => updateDraft(draft.id, { tags: addTag(draft.tags, tag) })}
                     onRemove={(tag) => updateDraft(draft.id, { tags: draft.tags.filter((item) => item !== tag) })}
                   />
-                  <button className="button" type="button" onClick={() => void saveDraft(draft)}>Save local session</button>
+                  <button className="button" type="button" onClick={() => void saveDraft(draft)}>
+                    {authState.status === "signed-in" ? "Save to Supabase" : "Save local session"}
+                  </button>
                 </div>
               )}
               {draft.saved && <p className="notice compact-notice" role="status">Saved {authState.status === "signed-in" ? "to Supabase" : "locally"}.</p>}
@@ -781,7 +791,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                   <div className="session-meta">
                     <span>{selectedSession.grip}</span>
                     {selectedSession.hand && <span>{selectedSession.hand}</span>}
-                    {normalizeTags(selectedSession.tags).map((tag) => <span key={tag}>{tag}</span>)}
+                    {visibleSessionTags(selectedSession).map((tag) => <span key={tag}>{tag}</span>)}
                   </div>
                   <div className="form-actions">
                     <button className="button button-secondary" type="button" onClick={() => startSessionEdit(selectedSession)}>Edit details</button>
@@ -1202,6 +1212,21 @@ function authDescription(authState: TrackerAuthState) {
   if (authState.status === "checking") return "Looking for an existing Supabase session.";
   if (authState.status === "local") return "Local demo mode is enabled, so sessions stay in this browser.";
   return "Sign in with your pre-created Supabase user to save sessions privately across devices.";
+}
+
+function saveDestinationLabel(authState: TrackerAuthState) {
+  return authState.status === "signed-in" ? "to Supabase" : "locally";
+}
+
+function saveFailureMessage(authState: TrackerAuthState, error: unknown) {
+  const destination = authState.status === "signed-in" ? "Supabase" : "local storage";
+  const detail = error instanceof Error && error.message ? `: ${error.message}` : ".";
+  return `Could not save to ${destination}${detail}`;
+}
+
+export function visibleSessionTags(session: TrackerSession) {
+  const grip = session.grip.trim().toLowerCase();
+  return normalizeTags(session.tags).filter((tag) => tag.toLowerCase() !== grip);
 }
 
 function availableMetricText(parsed?: ParsedTrackerCsv) {

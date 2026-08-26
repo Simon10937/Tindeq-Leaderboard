@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countSessionsThisWeek, createDraftsFromCsvFiles, normalizeWeeklyTarget } from "./tracker-app";
+import { countSessionsThisWeek, createDraftsFromCsvFiles, normalizeWeeklyTarget, visibleSessionTags } from "./tracker-app";
 import type { TrackerSession } from "@/features/tracker/types";
 
 describe("createDraftsFromCsvFiles", () => {
@@ -106,5 +106,27 @@ describe("normalizeWeeklyTarget", () => {
     expect(normalizeWeeklyTarget(3.6)).toBe(4);
     expect(normalizeWeeklyTarget(999)).toBe(14);
     expect(normalizeWeeklyTarget(Number.NaN)).toBeUndefined();
+  });
+});
+
+describe("visibleSessionTags", () => {
+  it("hides tags that duplicate the primary grip chip", () => {
+    const session: TrackerSession = {
+      id: "manual",
+      mode: "peak_force",
+      parserVersion: "test",
+      filename: "manual.csv",
+      sourceSummary: "Manual peak force",
+      vendorMetadata: {},
+      metrics: [],
+      trace: { elapsedUs: [], forceN: [] },
+      warnings: [],
+      grip: "half crimp",
+      tags: ["half crimp", "right"],
+      testedAt: "2026-08-24T12:00:00.000Z",
+      createdAt: "2026-08-24T12:00:00.000Z",
+    };
+
+    expect(visibleSessionTags(session)).toEqual(["right"]);
   });
 });
