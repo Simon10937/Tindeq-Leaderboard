@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countSessionsThisWeek, createDraftsFromCsvFiles, gripOptionsForMode, latestComparableChange, normalizeWeeklyTarget, resolveGripFilter, visibleSessionTags } from "./tracker-app";
+import { authDescription, countSessionsThisWeek, createDraftsFromCsvFiles, gripOptionsForMode, latestComparableChange, localUploadConflictMessage, localUploadFailureMessage, localUploadPromptMessage, normalizeWeeklyTarget, resetConfirmationMessage, resetStatusMessage, resolveGripFilter, shouldIgnoreSignedInAuthEvent, supabaseReadyMessage, uploadLocalSessions, visibleSessionTags } from "./tracker-app";
 import type { TrackerSession } from "@/features/tracker/types";
 
 describe("createDraftsFromCsvFiles", () => {
@@ -128,6 +128,135 @@ describe("visibleSessionTags", () => {
     };
 
     expect(visibleSessionTags(session)).toEqual(["right"]);
+  });
+});
+
+describe("private sync copy", () => {
+  const session: TrackerSession = {
+    id: "manual",
+    mode: "peak_force",
+    parserVersion: "test",
+    filename: "manual.csv",
+    sourceSummary: "Manual peak force",
+    vendorMetadata: {},
+    metrics: [],
+    trace: { elapsedUs: [], forceN: [] },
+    warnings: [],
+    grip: "half crimp",
+    testedAt: "2026-08-24T12:00:00.000Z",
+    createdAt: "2026-08-24T12:00:00.000Z",
+  };
+
+  it("asks before uploading existing local sessions after sign-in", () => {
+    const message = localUploadPromptMessage(2);
+
+    expect(message).toContain("2 local sessions");
+    expect(message).toContain("Upload them to Supabase");
+    expect(message).toContain("leave them local");
+  });
+
+  it("explains that local data remains intact after an upload failure", () => {
+    expect(localUploadFailureMessage(1, 3)).toContain("browser data is still local");
+    expect(localUploadConflictMessage(1, 3)).toContain("matching Supabase sessions already exist");
+  });
+
+  it("keeps signed-in copy honest while storage is still local", () => {
+    expect(authDescription({ status: "signed-in", email: "friend@example.com" }, { userId: "user-1", localSessionCount: 1 })).toContain("new sessions save locally");
+  });
+
+  it("uses destination-specific reset warnings", () => {
+    expect(resetConfirmationMessage("local")).toContain("local Tindeq tracker data");
+    expect(resetConfirmationMessage("supabase")).toContain("Supabase tracker data");
+    expect(resetStatusMessage("supabase")).toContain("Supabase tracker data cleared");
+  });
+
+  it("summarizes successful local uploads", () => {
+    expect(supabaseReadyMessage(1)).toContain("uploaded 1 local session");
+    expect(supabaseReadyMessage(0)).toBe("Supabase tracker ready.");
+  });
+
+  it("reports successful local-session uploads", async () => {
+    const saved: TrackerSession[] = [];
+    const result = await uploadLocalSessions([session], {
+      get: async () => undefined,
+      create: async (nextSession) => { saved.push(nextSession); return nextSession; },
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(saved).toEqual([session]);
+  });
+
+  it("reports partial local-session upload failures without treating the batch as complete", async () => {
+    const result = await uploadLocalSessions([
+      session,
+      { ...session, id: "failed" },
+    ], {
+      get: async () => undefined,
+      create: async (nextSession) => {
+        if (nextSession.id === "failed") throw new Error("remote write failed");
+        return nextSession;
+      },
+    });
+
+    expect(result).toEqual({ ok: false, failedCount: 1, conflictCount: 0 });
+  });
+
+  it("does not overwrite divergent remote sessions with the same id", async () => {
+    const saved: TrackerSession[] = [];
+    const result = await uploadLocalSessions([session], {
+      get: async () => ({ ...session, notes: "edited remotely" }),
+      create: async (nextSession) => { saved.push(nextSession); return nextSession; },
+    });
+
+    expect(result).toEqual({ ok: false, failedCount: 0, conflictCount: 1 });
+    expect(saved).toEqual([]);
+  });
+
+  it("does not overwrite a remote session that appears after the preflight check", async () => {
+    const result = await uploadLocalSessions([session], {
+      get: async () => undefined,
+      create: async () => {
+        throw new Error("duplicate key value violates unique constraint");
+      },
+    });
+
+    expect(result).toEqual({ ok: false, failedCount: 1, conflictCount: 0 });
+  });
+
+  it("treats identical remote sessions as already uploaded", async () => {
+    const saved: TrackerSession[] = [];
+    const result = await uploadLocalSessions([session], {
+      get: async () => session,
+      create: async (nextSession) => { saved.push(nextSession); return nextSession; },
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(saved).toEqual([]);
+  });
+
+  it("treats key-reordered remote JSON as already uploaded", async () => {
+    const saved: TrackerSession[] = [];
+    const reorderedSession = {
+      ...session,
+      vendorMetadata: { second: "2", first: "1" },
+    };
+    const localSession = {
+      ...session,
+      vendorMetadata: { first: "1", second: "2" },
+    };
+    const result = await uploadLocalSessions([localSession], {
+      get: async () => reorderedSession,
+      create: async (nextSession) => { saved.push(nextSession); return nextSession; },
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(saved).toEqual([]);
+  });
+
+  it("does not reopen the local upload prompt for repeated signed-in events on the active Supabase user", () => {
+    expect(shouldIgnoreSignedInAuthEvent("user-1", "user-1")).toBe(true);
+    expect(shouldIgnoreSignedInAuthEvent("user-1", "user-2")).toBe(false);
+    expect(shouldIgnoreSignedInAuthEvent(undefined, "user-1")).toBe(false);
   });
 });
 

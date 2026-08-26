@@ -1,9 +1,14 @@
-# Data lifecycle runbook
+# Personal tracker data posture
 
-Account deletion immediately tombstones the profile and ends active memberships. A persistent job then advances through `revoke`, `evidence`, `database`, and `identity` phases. The Auth identity is deleted last. Each phase has a four-minute lease; an interrupted job becomes retryable, backs off exponentially, and moves to `manual_review` after eight failures.
+The personal tracker stores imported Tindeq sessions locally in the browser by default. When Supabase sync is enabled, each saved session is stored as one owner-scoped `tracker_sessions` row containing the full normalized session JSON plus query columns for mode, grip, and test date.
 
-The daily worker claims at most five jobs. Monitor `account_deletion_jobs` for the oldest `next_run_at`, current phase, attempt count, lease expiry, and `manual_review` rows. Healthy operation has no expired leases and no due job older than 24 hours. A due job older than 24 hours or any manual-review row is an incident.
+There is no group leaderboard, public ranking, invitation flow, moderation queue, or evidence-download workflow in the active product surface. Row Level Security limits synced tracker rows to the authenticated owner.
 
-An operator can replay one manual-review job with `POST /api/cron/lifecycle`, the cron bearer secret, and JSON `{ "jobId": "…" }`. Record the reason and result in the incident log. Do not update job phases manually.
+Sign-in does not erase browser data. If local sessions are present after a user signs in, the app keeps the local store active until the user chooses either:
 
-Source files are private and removed before database measurements. Personal Postgres rows are removed transactionally, audit actors become random tombstones, and Auth is then deleted. Safe audit facts are retained for 12 months and purged by the lifecycle claim transaction. Evidence downloads require a fresh, target-bound admin review and are streamed once with no-store, attachment, nosniff, and a fixed CSV type.
+- Upload local sessions to Supabase.
+- Use Supabase only, leaving those local sessions in the browser.
+
+Production data preservation matters once Supabase sync is enabled. Any destructive remote schema command requires a backup/export confirmation and explicit approval for the target Supabase project before it runs.
+
+The only server-role Supabase client lives in `src/lib/supabase/admin.ts`. Do not use that client for tracker session CRUD paths; those should go through the authenticated user client so RLS is exercised.

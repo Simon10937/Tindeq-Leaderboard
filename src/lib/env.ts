@@ -1,10 +1,11 @@
 import { z } from "zod";
 
 const publicEnvSchema = z.object({
-  NEXT_PUBLIC_LOCAL_DEMO: z.string().optional(),
+  NEXT_PUBLIC_LOCAL_DEMO: z.enum(["true", "false"]).optional(),
   NEXT_PUBLIC_SUPABASE_URL: z.url().optional(),
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().min(16).optional(),
 });
+const placeholderEnvFragments = ["your-project", "replace_me", "local-demo"];
 
 export type PublicEnv = {
   NEXT_PUBLIC_LOCAL_DEMO?: string;
@@ -20,11 +21,25 @@ function readBundledPublicEnv(): Record<string, string | undefined> {
   };
 }
 
+function containsPlaceholder(value: string | undefined) {
+  return !value || placeholderEnvFragments.some((fragment) => value.includes(fragment));
+}
+
 export function getPublicEnv(source: Record<string, string | undefined> = readBundledPublicEnv()): PublicEnv {
   const result = publicEnvSchema.safeParse(source);
-  if (!result.success || (!result.data.NEXT_PUBLIC_LOCAL_DEMO && (!result.data.NEXT_PUBLIC_SUPABASE_URL || !result.data.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY))) {
+  const isLocalDemo = result.success && result.data.NEXT_PUBLIC_LOCAL_DEMO === "true";
+  if (
+    !result.success ||
+    (!isLocalDemo &&
+      (containsPlaceholder(result.data.NEXT_PUBLIC_SUPABASE_URL) ||
+        containsPlaceholder(result.data.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY)))
+  ) {
     throw new Error(
-      `Invalid public Supabase configuration: ${result.success ? "NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" : result.error.issues.map((issue) => issue.path.join(".")).join(", ")}`,
+      `Invalid public Supabase configuration: ${
+        result.success
+          ? "NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY must be real project values unless NEXT_PUBLIC_LOCAL_DEMO=true"
+          : result.error.issues.map((issue) => issue.path.join(".")).join(", ")
+      }`,
     );
   }
   return {
