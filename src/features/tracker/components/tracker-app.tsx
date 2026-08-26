@@ -45,8 +45,8 @@ const metricOptions: MetricOption[] = [
   { key: "peakForceN", label: "Peak force max", mode: "peak_force" },
 ];
 
-const gripPresets = ["20mm edge", "15mm edge", "half crimp", "rehab half crimp", "open hand", "pinch", "jug"];
-const tagPresets = ["rehab", "max effort", "repeaters", "endurance", "single finger", "skin", "warm-up", "block weight"];
+const gripPresets = ["20mm edge", "15mm edge", "half crimp", "rehab half crimp", "single finger", "open hand", "pinch", "jug"];
+const tagPresets = ["rehab", "max effort", "repeaters", "endurance", "skin", "warm-up", "block weight"];
 const weeklyTargetStorageKey = "tindeq-tracker-weekly-target";
 
 export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: ActiveTab }>) {
