@@ -391,13 +391,12 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const visibleImportDrafts = drafts;
   const availableModes = useMemo(() => chartModesForSessions(sessions), [sessions]);
   const effectiveModeFilter = availableModes.includes(modeFilter) ? modeFilter : availableModes[0];
-  const gripOptions = useMemo(() => ["all", ...Array.from(new Set(sessions
-    .filter((session) => session.mode === effectiveModeFilter)
-    .map((session) => session.grip))).sort()], [effectiveModeFilter, sessions]);
+  const gripOptions = useMemo(() => gripOptionsForMode(sessions, effectiveModeFilter), [effectiveModeFilter, sessions]);
+  const effectiveGripFilter = resolveGripFilter(gripFilter, gripOptions);
 
   const filteredSessions = sessions.filter((session) =>
     session.mode === effectiveModeFilter &&
-    (gripFilter === "all" || session.grip === gripFilter));
+    session.grip === effectiveGripFilter);
   const historySessions = sessions;
   const metricAvailability = useMemo(() => summarizeMetricAvailability(filteredSessions), [filteredSessions]);
   const modeMetricOptions = metricOptionsForMode(effectiveModeFilter);
@@ -473,7 +472,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                 onClick={() => {
                   setModeFilter(mode);
                   setSelectedMetric("all");
-                  setGripFilter("all");
+                  setGripFilter("");
                 }}
               >
                 {modeLabel(mode)}
@@ -505,12 +504,12 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
           <div className="chip-list plot-chip-list" aria-label="Grip">
             {gripOptions.map((grip) => (
               <button
-                className={gripFilter === grip ? "chip chip-selected" : "chip"}
+                className={effectiveGripFilter === grip ? "chip chip-selected" : "chip"}
                 key={grip}
                 type="button"
                 onClick={() => setGripFilter(grip)}
               >
-                {grip === "all" ? "All grips" : grip}
+                {grip}
               </button>
             ))}
           </div>
@@ -1227,6 +1226,16 @@ function saveFailureMessage(authState: TrackerAuthState, error: unknown) {
 export function visibleSessionTags(session: TrackerSession) {
   const grip = session.grip.trim().toLowerCase();
   return normalizeTags(session.tags).filter((tag) => tag.toLowerCase() !== grip);
+}
+
+export function gripOptionsForMode(sessions: readonly TrackerSession[], mode: ChartMode) {
+  return Array.from(new Set(sessions
+    .filter((session) => session.mode === mode)
+    .map((session) => session.grip))).sort();
+}
+
+export function resolveGripFilter(gripFilter: string, gripOptions: readonly string[]) {
+  return gripOptions.includes(gripFilter) ? gripFilter : gripOptions[0] ?? "";
 }
 
 function availableMetricText(parsed?: ParsedTrackerCsv) {

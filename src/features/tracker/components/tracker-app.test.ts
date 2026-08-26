@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countSessionsThisWeek, createDraftsFromCsvFiles, normalizeWeeklyTarget, visibleSessionTags } from "./tracker-app";
+import { countSessionsThisWeek, createDraftsFromCsvFiles, gripOptionsForMode, normalizeWeeklyTarget, resolveGripFilter, visibleSessionTags } from "./tracker-app";
 import type { TrackerSession } from "@/features/tracker/types";
 
 describe("createDraftsFromCsvFiles", () => {
@@ -128,5 +128,38 @@ describe("visibleSessionTags", () => {
     };
 
     expect(visibleSessionTags(session)).toEqual(["right"]);
+  });
+});
+
+describe("gripOptionsForMode", () => {
+  const baseSession: TrackerSession = {
+    id: "base",
+    mode: "peak_force",
+    parserVersion: "test",
+    filename: "test.csv",
+    sourceSummary: "Peak force",
+    vendorMetadata: {},
+    metrics: [],
+    trace: { elapsedUs: [], forceN: [] },
+    warnings: [],
+    grip: "single finger",
+    testedAt: "2026-08-24T12:00:00.000Z",
+    createdAt: "2026-08-24T12:00:00.000Z",
+  };
+
+  it("returns only concrete grip choices for the selected mode", () => {
+    expect(gripOptionsForMode([
+      { ...baseSession, id: "single", grip: "single finger" },
+      { ...baseSession, id: "half", grip: "half crimp" },
+      { ...baseSession, id: "repeater", mode: "repeater", grip: "20mm edge" },
+    ], "peak_force")).toEqual(["half crimp", "single finger"]);
+  });
+
+  it("defaults stale or empty grip selections to the leftmost grip chip", () => {
+    const options = ["half crimp", "single finger"];
+
+    expect(resolveGripFilter("", options)).toBe("half crimp");
+    expect(resolveGripFilter("all", options)).toBe("half crimp");
+    expect(resolveGripFilter("single finger", options)).toBe("single finger");
   });
 });
