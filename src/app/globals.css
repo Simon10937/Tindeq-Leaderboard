@@ -960,6 +960,8 @@ textarea {
   background: rgba(247, 249, 251, 0.96);
   border: 1px solid var(--line);
   border-radius: 14px;
+  bottom: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   bottom: max(12px, env(safe-area-inset-bottom, 0px));
   box-shadow: 0 10px 30px rgba(18, 26, 22, 0.16);
   display: none;
@@ -1007,6 +1009,7 @@ textarea {
   }
 
   .tracker-shell {
+    padding-bottom: 148px;
     padding-bottom: calc(148px + env(safe-area-inset-bottom, 0px));
     padding-top: 18px;
   }
