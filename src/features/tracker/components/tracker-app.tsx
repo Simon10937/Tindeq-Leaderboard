@@ -1397,6 +1397,11 @@ function summarizeMetricAvailability(sessions: readonly TrackerSession[]) {
 function summarizeProgressPoints(points: readonly ProgressPoint[]) {
   if (points.length === 0) return undefined;
   const latest = [...points].sort((a, b) => Date.parse(b.testedAt) - Date.parse(a.testedAt))[0];
-  const seriesCount = new Set(points.map((point) => [point.mode, point.grip, point.hand ?? "any", point.metricKey].join(":"))).size;
+  const seriesCount = new Set(points.map(progressSeriesKey)).size;
   return `${points.length} point${points.length === 1 ? "" : "s"} across ${seriesCount} series. Latest: ${formatProgressMetricLabel(latest)} ${formatMetricValue(latest)} on ${formatCompactDate(latest.testedAt)}.`;
+}
+
+function progressSeriesKey(point: ProgressPoint) {
+  const handKey = point.mode === "peak_force" ? "any" : point.hand ?? "any";
+  return [point.mode, point.grip, handKey, point.metricKey].join(":");
 }

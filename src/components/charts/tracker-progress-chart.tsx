@@ -102,8 +102,9 @@ export function TrackerProgressChart({ points, selectedMetric }: Props) {
 function groupProgressSeries(points: readonly ProgressPoint[]) {
   const grouped = new Map<string, { key: string; label: string; points: ProgressPoint[] }>();
   for (const point of points) {
-    const key = [point.mode, point.grip, point.hand ?? "any", point.metricKey].join(":");
-    const label = `${modeLabel(point.mode)} - ${point.grip}${point.hand ? ` - ${point.hand}` : ""} - ${chartMetricLabel(point)}`;
+    const handKey = point.mode === "peak_force" ? "any" : point.hand ?? "any";
+    const key = [point.mode, point.grip, handKey, point.metricKey].join(":");
+    const label = `${modeLabel(point.mode)} - ${point.grip}${point.mode !== "peak_force" && point.hand ? ` - ${point.hand}` : ""} - ${chartMetricLabel(point)}`;
     const item = grouped.get(key) ?? { key, label, points: [] };
     item.points.push(point);
     grouped.set(key, item);

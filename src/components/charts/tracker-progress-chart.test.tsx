@@ -38,6 +38,18 @@ describe("TrackerProgressChart", () => {
     expect(markup).toContain("<span>Max force</span>");
   });
 
+  it("keeps peak-force points for one grip in a single series across hand metadata", () => {
+    const markup = renderToStaticMarkup(<TrackerProgressChart points={[
+      { sessionId: "manual", mode: "peak_force", grip: "half crimp", testedAt: "2026-08-24T12:00:00.000Z", metricKey: "peakForceN", label: "Max force", value: 39.2266, unit: "N" },
+      { sessionId: "upload", mode: "peak_force", grip: "half crimp", hand: "right", testedAt: "2026-08-26T11:42:00.000Z", metricKey: "peakForceN", label: "Max force", value: 48.249, unit: "N" },
+    ]} />);
+
+    expect(markup.split("<span>Max force</span>")).toHaveLength(2);
+    expect(markup).toContain("M ");
+    expect(markup).toContain(" L ");
+    expect(markup).not.toContain("stroke-dasharray=\"10 5\"");
+  });
+
   it("renders kg labels, compact dates, and axis titles", () => {
     const markup = renderToStaticMarkup(<TrackerProgressChart points={points} />);
 
