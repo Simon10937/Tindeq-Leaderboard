@@ -34,6 +34,7 @@ export type ImportContext = Readonly<{
   hand?: "left" | "right" | "both";
   notes?: string;
   tags?: readonly string[];
+  referenceRole?: "healthy_hand_baseline";
 }>;
 
 export type ParsedTrackerCsv = Readonly<{
@@ -54,6 +55,7 @@ export type TrackerSession = ParsedTrackerCsv & Readonly<{
   hand?: "left" | "right" | "both";
   notes?: string;
   tags?: readonly string[];
+  referenceRole?: "healthy_hand_baseline";
   createdAt: string;
   updatedAt?: string;
   auditLog?: readonly TrackerSessionAuditEntry[];
@@ -67,7 +69,7 @@ export type TrackerSessionAuditEntry = Readonly<{
 }>;
 
 export type TrackerSessionAuditChange = Readonly<{
-  field: "grip" | "testedAt" | "hand" | "notes" | "tags";
+  field: "grip" | "testedAt" | "hand" | "notes" | "tags" | "referenceRole";
   before?: string | readonly string[];
   after?: string | readonly string[];
 }>;
@@ -103,6 +105,9 @@ export function validateImportContext(input: Partial<ImportContext>): ImportVali
   if (input.hand && !["left", "right", "both"].includes(input.hand)) {
     errors.push("Hand must be left, right, or both.");
   }
+  if (input.referenceRole && input.referenceRole !== "healthy_hand_baseline") {
+    errors.push("Reference role must be a healthy-hand baseline.");
+  }
 
   if (errors.length > 0) return { ok: false, errors };
   return {
@@ -113,6 +118,7 @@ export function validateImportContext(input: Partial<ImportContext>): ImportVali
       hand: input.hand,
       notes: input.notes?.trim() || undefined,
       tags: normalizeTags(input.tags),
+      referenceRole: input.referenceRole,
     },
   };
 }
@@ -132,6 +138,7 @@ export function buildTrackerSession(
     hand: context.hand,
     notes: context.notes,
     tags,
+    referenceRole: context.referenceRole,
     createdAt,
     updatedAt: createdAt,
     auditLog: [{
@@ -144,6 +151,7 @@ export function buildTrackerSession(
         ...(context.hand ? [{ field: "hand" as const, after: context.hand }] : []),
         ...(context.notes ? [{ field: "notes" as const, after: context.notes }] : []),
         ...(tags.length > 0 ? [{ field: "tags" as const, after: tags }] : []),
+        ...(context.referenceRole ? [{ field: "referenceRole" as const, after: context.referenceRole }] : []),
       ],
     }],
   };
@@ -163,6 +171,9 @@ export function updateTrackerSessionMetadata(
   if ((session.hand ?? "") !== (context.hand ?? "")) changes.push({ field: "hand", before: session.hand, after: context.hand });
   if ((session.notes ?? "") !== (context.notes ?? "")) changes.push({ field: "notes", before: session.notes, after: context.notes });
   if (!tagsEqual(beforeTags, normalizedTags)) changes.push({ field: "tags", before: beforeTags, after: normalizedTags });
+  if ((session.referenceRole ?? "") !== (context.referenceRole ?? "")) {
+    changes.push({ field: "referenceRole", before: session.referenceRole, after: context.referenceRole });
+  }
 
   if (changes.length === 0) return normalizeStoredTrackerSession(session);
 
@@ -173,6 +184,7 @@ export function updateTrackerSessionMetadata(
     hand: context.hand,
     notes: context.notes,
     tags: normalizedTags,
+    referenceRole: context.referenceRole,
     updatedAt: now,
     auditLog: [
       ...normalizeAuditLog(session),
@@ -189,6 +201,7 @@ export function updateTrackerSessionMetadata(
 export function normalizeStoredTrackerSession(session: TrackerSession): TrackerSession {
   return {
     ...session,
+    referenceRole: session.referenceRole === "healthy_hand_baseline" ? session.referenceRole : undefined,
     tags: normalizeTags(session.tags),
     updatedAt: session.updatedAt ?? session.createdAt,
     auditLog: normalizeAuditLog(session),

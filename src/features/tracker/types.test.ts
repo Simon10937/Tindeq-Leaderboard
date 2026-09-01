@@ -25,9 +25,16 @@ describe("validateImportContext", () => {
   });
 
   it("normalizes optional context for a valid import", () => {
-    expect(validateImportContext({ grip: " 20mm edge ", testedAt: "2026-08-22T10:00", hand: "right", notes: " warm ", tags: [" Rehab ", "rehab", "High effort"] })).toEqual({
+    expect(validateImportContext({ grip: " 20mm edge ", testedAt: "2026-08-22T10:00", hand: "right", notes: " warm ", tags: [" Rehab ", "rehab", "High effort"], referenceRole: "healthy_hand_baseline" })).toEqual({
       ok: true,
-      context: { grip: "20mm edge", testedAt: "2026-08-22T10:00", hand: "right", notes: "warm", tags: ["rehab", "high effort"] },
+      context: { grip: "20mm edge", testedAt: "2026-08-22T10:00", hand: "right", notes: "warm", tags: ["rehab", "high effort"], referenceRole: "healthy_hand_baseline" },
+    });
+  });
+
+  it("rejects unknown reference roles", () => {
+    expect(validateImportContext({ grip: "20mm edge", testedAt: "2026-08-22T10:00", referenceRole: "baseline" as never })).toEqual({
+      ok: false,
+      errors: ["Reference role must be a healthy-hand baseline."],
     });
   });
 });
@@ -40,13 +47,13 @@ describe("normalizeTags", () => {
 
 describe("tracker sessions", () => {
   it("builds local sessions without remote ownership fields", () => {
-    const session = buildTrackerSession(parsed, { grip: "jug", testedAt: "2026-08-22T10:00", tags: ["rehab"] }, "local-1");
+    const session = buildTrackerSession(parsed, { grip: "jug", testedAt: "2026-08-22T10:00", tags: ["rehab"], referenceRole: "healthy_hand_baseline" }, "local-1");
 
-    expect(session).toMatchObject({ id: "local-1", grip: "jug", testedAt: "2026-08-22T10:00", tags: ["rehab"] });
+    expect(session).toMatchObject({ id: "local-1", grip: "jug", testedAt: "2026-08-22T10:00", tags: ["rehab"], referenceRole: "healthy_hand_baseline" });
     expect(session.updatedAt).toBe(session.createdAt);
     expect(session.auditLog?.[0]).toMatchObject({
       type: "created",
-      changes: expect.arrayContaining([{ field: "tags", after: ["rehab"] }]),
+      changes: expect.arrayContaining([{ field: "tags", after: ["rehab"] }, { field: "referenceRole", after: "healthy_hand_baseline" }]),
     });
     expect(session).not.toHaveProperty("groupId");
     expect(session).not.toHaveProperty("ownerId");
@@ -90,6 +97,7 @@ describe("tracker sessions", () => {
       hand: "right",
       notes: "felt strong",
       tags: ["rehab", "high effort"],
+      referenceRole: "healthy_hand_baseline",
     }, "2026-08-23T10:00:00.000Z");
 
     expect(updated.id).toBe("local-1");
@@ -99,6 +107,7 @@ describe("tracker sessions", () => {
       hand: "right",
       notes: "felt strong",
       tags: ["rehab", "high effort"],
+      referenceRole: "healthy_hand_baseline",
       updatedAt: "2026-08-23T10:00:00.000Z",
     });
     expect(updated.auditLog).toHaveLength(2);
@@ -108,8 +117,23 @@ describe("tracker sessions", () => {
         { field: "grip", before: "jug", after: "half crimp" },
         { field: "hand", before: "left", after: "right" },
         { field: "tags", before: ["rehab"], after: ["rehab", "high effort"] },
+        { field: "referenceRole", before: undefined, after: "healthy_hand_baseline" },
       ]),
     });
+  });
+
+  it("removes reference role metadata and records the change", () => {
+    const session = buildTrackerSession(parsed, { grip: "jug", testedAt: "2026-08-22T10:00", referenceRole: "healthy_hand_baseline" }, "local-1");
+
+    const updated = updateTrackerSessionMetadata(session, {
+      grip: "jug",
+      testedAt: "2026-08-22T10:00",
+    }, "2026-08-23T10:00:00.000Z");
+
+    expect(updated.referenceRole).toBeUndefined();
+    expect(updated.auditLog?.[1].changes).toEqual([
+      { field: "referenceRole", before: "healthy_hand_baseline", after: undefined },
+    ]);
   });
 
   it("normalizes old sessions without audit metadata", () => {

@@ -15,6 +15,7 @@ describe("trackerSessionToSupabaseRow", () => {
       trace: { elapsedUs: [0], forceN: [120] },
       warnings: [],
       grip: "half crimp",
+      referenceRole: "healthy_hand_baseline",
       tags: ["rehab"],
       testedAt: "2026-08-22T10:00:00.000Z",
       createdAt: "2026-08-22T10:01:00.000Z",
