@@ -8,9 +8,9 @@ import { extractCsvFiles, type ExtractedCsvFile } from "@/features/tracker/impor
 import { detectTindeqCsv } from "@/features/tracker/parsers/detect";
 import { augmentStoredEnduranceMetrics } from "@/features/tracker/parsers/endurance";
 import { augmentStoredPeakForceMetrics } from "@/features/tracker/parsers/peak-force";
-import { augmentStoredRepeaterMetrics } from "@/features/tracker/parsers/repeater";
+import { applyRepeaterPeakExclusions, augmentStoredRepeaterMetrics } from "@/features/tracker/parsers/repeater";
 import { parseCsvRows } from "@/features/tracker/parsers/tindeq-shared";
-import { buildTrackerSession, normalizeStoredTrackerSession, normalizeTags, progressPointsForSession, updateTrackerSessionMetadata, validateImportContext, type ImportContext, type ParsedTrackerCsv, type ProgressPoint, type TrackerMetricKey, type TrackerMode, type TrackerSession } from "@/features/tracker/types";
+import { buildTrackerSession, normalizeRepeaterPeakReview, normalizeStoredTrackerSession, normalizeTags, orderedStringArraysEqual, progressPointsForSession, updateTrackerSessionMetadata, validateImportContext, type ImportContext, type ParsedTrackerCsv, type ProgressPoint, type RepeaterPeakCandidate, type RepeaterPeakReview, type TrackerMetricKey, type TrackerMode, type TrackerSession, type TrackerSessionAuditChange, type TrackerSessionMetadataUpdate } from "@/features/tracker/types";
 import { createTrackerStore, type TrackerStore } from "@/features/tracker/storage/local-store";
 import { createSupabaseTrackerStore, createTrackerSupabaseClient, readTrackerAuthState, type TrackerAuthState } from "@/features/tracker/storage/supabase-store";
 
@@ -29,6 +29,7 @@ type DraftImport = Readonly<{
   saved?: boolean;
   unsupportedFilenames?: readonly string[];
   gripSuggestion?: string;
+  repeaterExcludedCandidateIds?: readonly string[];
 }>;
 
 type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "hand" | "notes" | "tags" | "referenceRole">>;
@@ -37,10 +38,11 @@ type AvailableMetric = Extract<TrackerSession["metrics"][number], { available: t
 type ActiveTab = "progress" | "import" | "history";
 type ChartMode = Extract<TrackerMode, "endurance" | "repeater" | "peak_force">;
 type HandFilter = "all" | "left" | "right" | "both";
-type SessionEditState = Readonly<{ sessionId: string; context: ImportContext }>;
+type SessionEditState = Readonly<{ sessionId: string; context: ImportContext; repeaterExcludedCandidateIds?: readonly string[] }>;
 type MetricOption = Readonly<{ key: TrackerMetricKey; label: string; mode?: TrackerMode }>;
 type StorageMode = "local" | "supabase";
 type SyncPrompt = Readonly<{ userId: string; localSessionCount: number }>;
+type HandFilterSelection = HandFilter | "auto";
 type BaselineComparisonFilters = Readonly<{
   mode: ChartMode;
   grip: string;
@@ -79,7 +81,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const [selectedMetric, setSelectedMetric] = useState<SelectedMetric>("auto");
   const [modeFilter, setModeFilter] = useState<ChartMode>("repeater");
   const [gripFilter, setGripFilter] = useState("all");
-  const [handFilter, setHandFilter] = useState<HandFilter>("all");
+  const [handFilter, setHandFilter] = useState<HandFilterSelection>("auto");
   const [showBaseline, setShowBaseline] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
   const [status, setStatus] = useState<string | undefined>();
@@ -239,6 +241,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   async function saveDraft(draft: DraftImport) {
     const store = storeRef.current;
     if (!store || !draft.parsed) return;
+    const parsed = parsedWithRepeaterExclusions(draft.parsed, draft.repeaterExcludedCandidateIds ?? []);
     const validation = validateImportContext({
       grip: draft.grip,
       testedAt: draft.testedAt,
@@ -253,7 +256,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
     }
 
     try {
-      await store.save(buildTrackerSession(draft.parsed, validation.context));
+      await store.save(buildTrackerSession(parsed, validation.context));
       await refreshSessions(store);
       setDrafts((current) => current.map((item) => item.id === draft.id ? { ...item, saved: true, expanded: false } : item));
       setStatus(`${draft.filename} saved ${saveDestinationLabel(storageMode)}.`);
@@ -408,6 +411,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   }
 
   function startSessionEdit(session: TrackerSession) {
+    const repeaterReview = currentRepeaterPeakReview(session);
     setSessionEdit({
       sessionId: session.id,
       context: {
@@ -418,6 +422,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
         tags: normalizeTags(session.tags),
         referenceRole: session.referenceRole,
       },
+      repeaterExcludedCandidateIds: session.mode === "repeater" ? repeaterReview?.excludedCandidateIds ?? [] : undefined,
     });
     setSessionTagInput("");
   }
@@ -436,7 +441,8 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
       return;
     }
 
-    const updated = updateTrackerSessionMetadata(session, validation.context);
+    const metadataUpdate = metadataUpdateForSessionEdit(session, sessionEdit);
+    const updated = updateTrackerSessionMetadata(session, validation.context, { metadataUpdate });
     try {
       await store.save(updated);
       await refreshSessions(store);
@@ -464,7 +470,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
     session.mode === effectiveModeFilter &&
     session.grip === effectiveGripFilter);
   const handOptions = useMemo(() => handOptionsForSessions(modeGripSessions), [modeGripSessions]);
-  const effectiveHandFilter = resolveHandFilter(handFilter, handOptions);
+  const effectiveHandFilter = resolveHandFilter(handFilter, handOptions, modeGripSessions);
   const filteredSessions = modeGripSessions.filter((session) => sessionMatchesHandFilter(session, effectiveHandFilter));
   const progressSessions = filteredSessions.filter((session) => session.referenceRole !== "healthy_hand_baseline");
   const historySessions = sessions;
@@ -496,6 +502,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const latestSummaryPoint = latestProgressPoint(summaryPoints);
   const previousChange = latestComparableChange(summaryPoints);
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? historySessions[0];
+  const selectedSessionRepeaterReview = useMemo(() => selectedSession ? currentRepeaterPeakReview(selectedSession) : undefined, [selectedSession]);
   const latestSession = progressSessions[0];
   const latestAverage = latestSession ? primaryAverageMetric(latestSession) : undefined;
   const latestPeak = latestSession ? metricValue(latestSession, "peakForceN") : undefined;
@@ -553,7 +560,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                   setModeFilter(mode);
                   setSelectedMetric("auto");
                   setGripFilter("");
-                  setHandFilter("all");
+                  setHandFilter("auto");
                 }}
               >
                 {modeLabel(mode)}
@@ -568,7 +575,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                 type="button"
                 onClick={() => {
                   setGripFilter(grip);
-                  setHandFilter("all");
+                  setHandFilter("auto");
                 }}
               >
                 {grip}
@@ -755,13 +762,15 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
               <button className="text-button" type="button" onClick={dismissSavedDrafts}>Dismiss saved imports</button>
             </div>
           )}
-          {visibleImportDrafts.map((draft) => (
+          {visibleImportDrafts.map((draft) => {
+            const parsed = draft.parsed ? parsedWithRepeaterExclusions(draft.parsed, draft.repeaterExcludedCandidateIds ?? []) : undefined;
+            return (
             <article className="draft-card" key={draft.id}>
               <div className="draft-card-head">
                 <div>
                   <span className="eyebrow">Detected</span>
                   <h3>{draft.filename}</h3>
-                  <p>{draft.error ?? `${modeLabel(draft.parsed?.mode)} - ${availableMetricText(draft.parsed)}`}</p>
+                  <p>{draft.error ?? `${modeLabel(parsed?.mode)} - ${availableMetricText(parsed)}`}</p>
                 </div>
                 <div className="draft-card-actions">
                   {draft.parsed && !draft.saved && (
@@ -798,6 +807,11 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                     />
                     <span>Healthy hand baseline</span>
                   </label>
+                  <RepeaterPeakExclusionPicker
+                    review={parsed?.repeaterPeakReview}
+                    selectedIds={draft.repeaterExcludedCandidateIds ?? []}
+                    onChange={(excludedIds) => updateDraft(draft.id, { repeaterExcludedCandidateIds: excludedIds })}
+                  />
                   <label className="draft-notes">Notes
                     <textarea value={draft.notes} onChange={(event) => updateDraft(draft.id, { notes: event.currentTarget.value })} />
                   </label>
@@ -817,7 +831,8 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
               )}
               {draft.saved && <p className="notice compact-notice" role="status">Saved {storageMode === "supabase" ? "to Supabase" : "locally"}.</p>}
             </article>
-          ))}
+          );
+          })}
         </section>
       )}
 
@@ -887,6 +902,11 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                     />
                     <span>Healthy hand baseline</span>
                   </label>
+                  <RepeaterPeakExclusionPicker
+                    review={selectedSessionRepeaterReview}
+                    selectedIds={sessionEdit.repeaterExcludedCandidateIds ?? []}
+                    onChange={(excludedIds) => setSessionEdit((current) => current ? { ...current, repeaterExcludedCandidateIds: excludedIds } : current)}
+                  />
                   <label className="draft-notes">Notes
                     <textarea value={sessionEdit.context.notes ?? ""} onChange={(event) => {
                       const notes = event.currentTarget.value;
@@ -913,6 +933,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                     <span>{selectedSession.grip}</span>
                     {selectedSession.hand && <span>{selectedSession.hand}</span>}
                     {selectedSession.referenceRole === "healthy_hand_baseline" && <span>healthy baseline</span>}
+                    {selectedSession.repeaterPeakReview && selectedSession.repeaterPeakReview.excludedCandidateIds.length > 0 && <span>{selectedSession.repeaterPeakReview.excludedCandidateIds.length} peak{selectedSession.repeaterPeakReview.excludedCandidateIds.length === 1 ? "" : "s"} excluded</span>}
                     {visibleSessionTags(selectedSession).map((tag) => <span key={tag}>{tag}</span>)}
                   </div>
                   <div className="form-actions">
@@ -934,6 +955,9 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                       <div><dt>Source</dt><dd>{selectedSession.sourceSummary}</dd></div>
                       <div><dt>Created</dt><dd>{formatCompactDate(selectedSession.createdAt)}</dd></div>
                       <div><dt>Updated</dt><dd>{formatCompactDate(selectedSession.updatedAt ?? selectedSession.createdAt)}</dd></div>
+                      {selectedSession.mode === "repeater" && (
+                        <div><dt>Excluded peaks</dt><dd>{excludedPeakSummary(selectedSession.repeaterPeakReview)}</dd></div>
+                      )}
                     </dl>
                     {Object.keys(selectedSession.vendorMetadata).length > 0 && (
                       <div className="audit-block">
@@ -950,7 +974,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                           {selectedSession.auditLog.map((entry) => (
                             <li key={entry.id}>
                               <strong>{entry.type === "created" ? "Imported" : "Edited"} {formatCompactDate(entry.createdAt)}</strong>
-                              <span>{entry.changes.map((change) => change.field).join(", ")}</span>
+                              <span>{entry.changes.map((change) => auditChangeSummary(change, selectedSession)).join(", ")}</span>
                             </li>
                           ))}
                         </ul>
@@ -1091,6 +1115,57 @@ function GripPicker({ legend, value, suggestions, hint, onChange }: Readonly<{ l
       </label>
       {hint && <p className="field-hint">{hint}</p>}
     </fieldset>
+  );
+}
+
+function RepeaterPeakExclusionPicker({
+  review,
+  selectedIds,
+  onChange,
+}: Readonly<{
+  review?: RepeaterPeakReview;
+  selectedIds: readonly string[];
+  onChange: (selectedIds: readonly string[]) => void;
+}>) {
+  if (!review) return null;
+  if (review.candidates.length === 0) {
+    return <p className="field-hint peak-exclusion-empty">No repeater peaks available to exclude.</p>;
+  }
+
+  const selected = new Set(normalizeRepeaterPeakReview({ ...review, excludedCandidateIds: selectedIds }).excludedCandidateIds);
+  const allSelected = selected.size >= review.candidates.length;
+
+  return (
+    <details className="peak-exclusion-picker">
+      <summary>
+        <span>Exclude peaks</span>
+        <strong>{selected.size} selected</strong>
+      </summary>
+      <div className="peak-exclusion-menu" role="group" aria-label="Repeater peaks to exclude">
+        {review.candidates.map((candidate) => {
+          const checked = selected.has(candidate.id);
+          return (
+            <label className="peak-exclusion-option" key={candidate.id}>
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={(event) => {
+                  const next = new Set(selected);
+                  if (event.currentTarget.checked) next.add(candidate.id);
+                  else next.delete(candidate.id);
+                  onChange([...next]);
+                }}
+              />
+              <span>
+                <strong>{repeaterPeakLabel(candidate)}</strong>
+                <small>{formatPeakElapsed(candidate.peakElapsedUs)}</small>
+              </span>
+            </label>
+          );
+        })}
+        {allSelected && <p className="field-hint">Keep at least one rep included to calculate repeater stats.</p>}
+      </div>
+    </details>
   );
 }
 
@@ -1538,6 +1613,80 @@ function createDraftFromCsv(source: string, filename: string, idSuffix: string, 
   };
 }
 
+function parsedWithRepeaterExclusions(parsed: ParsedTrackerCsv, excludedCandidateIds: readonly string[]): ParsedTrackerCsv {
+  if (parsed.mode !== "repeater") return parsed;
+  if (excludedCandidateIds.length === 0) return parsed;
+  const recalculated = applyRepeaterPeakExclusions(parsed, excludedCandidateIds);
+  return {
+    ...parsed,
+    metrics: recalculated.metrics,
+    warnings: recalculated.warnings,
+    repeaterPeakReview: recalculated.repeaterPeakReview,
+  };
+}
+
+function currentRepeaterPeakReview(session: TrackerSession): RepeaterPeakReview | undefined {
+  if (session.mode !== "repeater") return undefined;
+  return applyRepeaterPeakExclusions(session, normalizeRepeaterPeakReview(session.repeaterPeakReview).excludedCandidateIds).repeaterPeakReview;
+}
+
+function metadataUpdateForSessionEdit(session: TrackerSession, edit: SessionEditState): TrackerSessionMetadataUpdate | undefined {
+  if (session.mode !== "repeater") return undefined;
+  const currentReview = currentRepeaterPeakReview(session);
+  const before = normalizeRepeaterPeakReview(currentReview).excludedCandidateIds;
+  const after = edit.repeaterExcludedCandidateIds ?? [];
+  if (orderedStringArraysEqual(before, after)) return undefined;
+  const recalculated = applyRepeaterPeakExclusions({ ...session, repeaterPeakReview: currentReview }, after);
+  return {
+    metrics: recalculated.metrics,
+    warnings: recalculated.warnings,
+    repeaterPeakReview: recalculated.repeaterPeakReview,
+  };
+}
+
+function repeaterPeakLabel(candidate: RepeaterPeakCandidate) {
+  return `Rep ${candidate.ordinal}: ${formatMetricValue({ key: "peakForceN", value: candidate.peakForceN, unit: "N" })}`;
+}
+
+function excludedPeakSummary(review: RepeaterPeakReview | undefined) {
+  const normalized = normalizeRepeaterPeakReview(review);
+  if (normalized.excludedCandidateIds.length === 0) return "None";
+  const candidatesById = new Map(normalized.candidates.map((candidate) => [candidate.id, candidate]));
+  return normalized.excludedCandidateIds
+    .map((id) => {
+      const candidate = candidatesById.get(id);
+      return candidate ? `${repeaterPeakLabel(candidate)} at ${formatPeakElapsed(candidate.peakElapsedUs)}` : id;
+    })
+    .join("; ");
+}
+
+function auditChangeSummary(change: TrackerSessionAuditChange, session: TrackerSession) {
+  if (change.field !== "repeaterPeakExclusions") return change.field;
+  const before = Array.isArray(change.before) ? change.before : [];
+  const after = Array.isArray(change.after) ? change.after : [];
+  const added = after.filter((id) => !before.includes(id));
+  const removed = before.filter((id) => !after.includes(id));
+  const pieces = [
+    added.length > 0 ? `excluded ${peakIdList(added, session)}` : undefined,
+    removed.length > 0 ? `restored ${peakIdList(removed, session)}` : undefined,
+  ].filter(Boolean);
+  return pieces.length > 0 ? pieces.join("; ") : "repeater peak exclusions";
+}
+
+function peakIdList(ids: readonly string[], session: TrackerSession) {
+  const candidatesById = new Map(normalizeRepeaterPeakReview(session.repeaterPeakReview).candidates.map((candidate) => [candidate.id, candidate]));
+  return ids
+    .map((id) => {
+      const candidate = candidatesById.get(id);
+      return candidate ? repeaterPeakLabel(candidate) : id;
+    })
+    .join(", ");
+}
+
+function formatPeakElapsed(elapsedUs: number) {
+  return `${(elapsedUs / 1_000_000).toFixed(1)}s`;
+}
+
 function draftDefaultsFromParsedCsv(parsed: ParsedTrackerCsv): DraftDefaults {
   const notes = [
     parsed.vendorMetadata.comment,
@@ -1634,6 +1783,8 @@ function createLocalDemoRepeaterSessions(): TrackerSession[] {
       hand: "right",
       averageForceN: 188,
       peakForceN: 238,
+      rawPeakForceN: 310,
+      excludedPeakOrdinal: 2,
       createdAt,
     }),
     createLocalDemoRepeaterSession({
@@ -1653,9 +1804,16 @@ function createLocalDemoRepeaterSession(input: Readonly<{
   hand: "left" | "right";
   averageForceN: number;
   peakForceN: number;
+  rawPeakForceN?: number;
+  excludedPeakOrdinal?: number;
   createdAt: string;
 }>): TrackerSession {
   const grip = "open hand";
+  const trace = demoRepeaterTrace(input.averageForceN, input.peakForceN, input.rawPeakForceN);
+  const candidates = demoRepeaterCandidates(input.id, trace);
+  const excludedCandidateIds = candidates
+    .filter((candidate) => candidate.ordinal === input.excludedPeakOrdinal)
+    .map((candidate) => candidate.id);
 
   return {
     id: input.id,
@@ -1673,10 +1831,14 @@ function createLocalDemoRepeaterSession(input: Readonly<{
       { key: "peakForceN", label: "Peak force", value: input.peakForceN, unit: "N", available: true },
     ],
     trace: {
-      elapsedUs: [0, 1000000, 2000000, 3000000, 4000000, 5000000],
-      forceN: [12, input.averageForceN * 0.82, input.peakForceN, input.averageForceN * 0.94, input.averageForceN * 0.76, 15],
+      elapsedUs: trace.elapsedUs,
+      forceN: trace.forceN,
     },
-    warnings: [],
+    warnings: excludedCandidateIds.length > 0 ? ["Excluded 1 repeater peak from calculated statistics."] : [],
+    repeaterPeakReview: {
+      candidates,
+      excludedCandidateIds,
+    },
     grip,
     testedAt: input.testedAt,
     hand: input.hand,
@@ -1693,9 +1855,36 @@ function createLocalDemoRepeaterSession(input: Readonly<{
         { field: "testedAt", after: input.testedAt },
         { field: "hand", after: input.hand },
         { field: "tags", after: ["demo"] },
+        ...(excludedCandidateIds.length > 0 ? [{ field: "repeaterPeakExclusions" as const, after: excludedCandidateIds }] : []),
       ],
     }],
   };
+}
+
+function demoRepeaterTrace(averageForceN: number, peakForceN: number, rawPeakForceN = peakForceN) {
+  return {
+    elapsedUs: [0, 1_000_000, 2_000_000, 3_000_000, 4_000_000, 5_000_000, 6_000_000, 7_000_000, 8_000_000, 9_000_000],
+    forceN: [12, averageForceN * 0.72, peakForceN * 0.92, 14, averageForceN * 0.76, rawPeakForceN, 13, averageForceN * 0.7, peakForceN, 11],
+  };
+}
+
+function demoRepeaterCandidates(sessionId: string, trace: TrackerSession["trace"]): RepeaterPeakCandidate[] {
+  const windows = [
+    { start: 1, end: 2, peak: 2 },
+    { start: 4, end: 5, peak: 5 },
+    { start: 7, end: 8, peak: 8 },
+  ];
+
+  return windows.map((window, index) => ({
+    id: `${sessionId}-demo-peak-${window.peak}`,
+    parserVersion: "demo-repeater-csv/v1",
+    ordinal: index + 1,
+    peakTraceIndex: window.peak,
+    peakElapsedUs: trace.elapsedUs[window.peak] ?? 0,
+    peakForceN: trace.forceN[window.peak] ?? 0,
+    regionStartIndex: window.start,
+    regionEndIndex: window.end,
+  }));
 }
 
 function authTitle(authState: TrackerAuthState) {
@@ -1837,8 +2026,30 @@ export function handOptionsForSessions(sessions: readonly TrackerSession[]): Han
   return options;
 }
 
-export function resolveHandFilter(handFilter: HandFilter, handOptions: readonly HandFilter[]) {
-  return handOptions.includes(handFilter) ? handFilter : "all";
+export function resolveHandFilter(
+  handFilter: HandFilterSelection,
+  handOptions: readonly HandFilter[],
+  sessions: readonly Pick<TrackerSession, "hand">[] = [],
+) {
+  if (handFilter === "auto") return mostRepresentedSingleHand(sessions, handOptions) ?? "all";
+  return handOptions.includes(handFilter) ? handFilter : mostRepresentedSingleHand(sessions, handOptions) ?? "all";
+}
+
+function mostRepresentedSingleHand(sessions: readonly Pick<TrackerSession, "hand">[], handOptions: readonly HandFilter[]) {
+  if (!handOptions.includes("left") && !handOptions.includes("right")) return undefined;
+
+  let leftCount = 0;
+  let rightCount = 0;
+  for (const session of sessions) {
+    if (session.hand === "left") leftCount += 1;
+    if (session.hand === "right") rightCount += 1;
+  }
+
+  if (leftCount > rightCount && handOptions.includes("left")) return "left";
+  if (rightCount > leftCount && handOptions.includes("right")) return "right";
+  if (leftCount > 0 && !handOptions.includes("right")) return "left";
+  if (rightCount > 0 && !handOptions.includes("left")) return "right";
+  return undefined;
 }
 
 function sessionMatchesHandFilter(session: TrackerSession, handFilter: HandFilter) {

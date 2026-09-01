@@ -14,6 +14,10 @@ describe("trackerSessionToSupabaseRow", () => {
       metrics: [{ key: "peakForceN", label: "Peak force", value: 120, unit: "N", available: true }],
       trace: { elapsedUs: [0], forceN: [120] },
       warnings: [],
+      repeaterPeakReview: {
+        candidates: [{ id: "peak-1", parserVersion: "test", ordinal: 1, peakTraceIndex: 0, peakElapsedUs: 0, peakForceN: 120, regionStartIndex: 0, regionEndIndex: 0 }],
+        excludedCandidateIds: ["peak-1"],
+      },
       grip: "half crimp",
       referenceRole: "healthy_hand_baseline",
       tags: ["rehab"],

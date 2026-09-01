@@ -28,6 +28,23 @@ export type TrackerTrace = Readonly<{
   forceN: readonly number[];
 }>;
 
+export type RepeaterPeakCandidate = Readonly<{
+  id: string;
+  parserVersion: string;
+  ordinal: number;
+  peakTraceIndex: number;
+  peakElapsedUs: number;
+  peakForceN: number;
+  regionStartIndex: number;
+  regionEndIndex: number;
+}>;
+
+export type RepeaterPeakReview = Readonly<{
+  candidates: readonly RepeaterPeakCandidate[];
+  excludedCandidateIds: readonly string[];
+  warning?: string;
+}>;
+
 export type ImportContext = Readonly<{
   grip: string;
   testedAt: string;
@@ -46,6 +63,7 @@ export type ParsedTrackerCsv = Readonly<{
   metrics: readonly TrackerMetric[];
   trace: TrackerTrace;
   warnings: readonly string[];
+  repeaterPeakReview?: RepeaterPeakReview;
 }>;
 
 export type TrackerSession = ParsedTrackerCsv & Readonly<{
@@ -69,9 +87,20 @@ export type TrackerSessionAuditEntry = Readonly<{
 }>;
 
 export type TrackerSessionAuditChange = Readonly<{
-  field: "grip" | "testedAt" | "hand" | "notes" | "tags" | "referenceRole";
+  field: "grip" | "testedAt" | "hand" | "notes" | "tags" | "referenceRole" | "repeaterPeakExclusions";
   before?: string | readonly string[];
   after?: string | readonly string[];
+}>;
+
+export type TrackerSessionMetadataUpdate = Readonly<{
+  metrics?: readonly TrackerMetric[];
+  warnings?: readonly string[];
+  repeaterPeakReview?: RepeaterPeakReview;
+}>;
+
+export type UpdateTrackerSessionMetadataOptions = Readonly<{
+  now?: string;
+  metadataUpdate?: TrackerSessionMetadataUpdate;
 }>;
 
 export type ProgressPoint = Readonly<{
@@ -130,8 +159,10 @@ export function buildTrackerSession(
 ): TrackerSession {
   const createdAt = new Date().toISOString();
   const tags = normalizeTags(context.tags);
+  const repeaterPeakReview = parsed.mode === "repeater" ? normalizeRepeaterPeakReview(parsed.repeaterPeakReview) : undefined;
   return {
     ...parsed,
+    ...(repeaterPeakReview ? { repeaterPeakReview } : {}),
     id,
     grip: context.grip,
     testedAt: context.testedAt,
@@ -152,6 +183,7 @@ export function buildTrackerSession(
         ...(context.notes ? [{ field: "notes" as const, after: context.notes }] : []),
         ...(tags.length > 0 ? [{ field: "tags" as const, after: tags }] : []),
         ...(context.referenceRole ? [{ field: "referenceRole" as const, after: context.referenceRole }] : []),
+        ...(repeaterPeakReview?.excludedCandidateIds.length ? [{ field: "repeaterPeakExclusions" as const, after: repeaterPeakReview.excludedCandidateIds }] : []),
       ],
     }],
   };
@@ -160,38 +192,53 @@ export function buildTrackerSession(
 export function updateTrackerSessionMetadata(
   session: TrackerSession,
   context: ImportContext,
-  now = new Date().toISOString(),
+  options: UpdateTrackerSessionMetadataOptions = {},
 ): TrackerSession {
+  const metadataUpdate = options.metadataUpdate;
+  const updatedAt = options.now ?? new Date().toISOString();
   const normalizedTags = normalizeTags(context.tags);
   const changes: TrackerSessionAuditChange[] = [];
   const beforeTags = normalizeTags(session.tags);
+  const canUpdateRepeaterMetadata = session.mode === "repeater";
+  const beforeReview = canUpdateRepeaterMetadata ? normalizeRepeaterPeakReview(session.repeaterPeakReview) : undefined;
+  const afterReview = canUpdateRepeaterMetadata && metadataUpdate?.repeaterPeakReview ? normalizeRepeaterPeakReview(metadataUpdate.repeaterPeakReview) : undefined;
 
   if (session.grip !== context.grip) changes.push({ field: "grip", before: session.grip, after: context.grip });
   if (session.testedAt !== context.testedAt) changes.push({ field: "testedAt", before: session.testedAt, after: context.testedAt });
   if ((session.hand ?? "") !== (context.hand ?? "")) changes.push({ field: "hand", before: session.hand, after: context.hand });
   if ((session.notes ?? "") !== (context.notes ?? "")) changes.push({ field: "notes", before: session.notes, after: context.notes });
-  if (!tagsEqual(beforeTags, normalizedTags)) changes.push({ field: "tags", before: beforeTags, after: normalizedTags });
+  if (!orderedStringArraysEqual(beforeTags, normalizedTags)) changes.push({ field: "tags", before: beforeTags, after: normalizedTags });
   if ((session.referenceRole ?? "") !== (context.referenceRole ?? "")) {
     changes.push({ field: "referenceRole", before: session.referenceRole, after: context.referenceRole });
+  }
+  if (afterReview && beforeReview && !orderedStringArraysEqual(beforeReview.excludedCandidateIds, afterReview.excludedCandidateIds)) {
+    changes.push({
+      field: "repeaterPeakExclusions",
+      before: beforeReview.excludedCandidateIds,
+      after: afterReview.excludedCandidateIds,
+    });
   }
 
   if (changes.length === 0) return normalizeStoredTrackerSession(session);
 
   return {
     ...session,
+    ...(canUpdateRepeaterMetadata && metadataUpdate?.metrics ? { metrics: metadataUpdate.metrics } : {}),
+    ...(canUpdateRepeaterMetadata && metadataUpdate?.warnings ? { warnings: metadataUpdate.warnings } : {}),
+    ...(afterReview ? { repeaterPeakReview: afterReview } : {}),
     grip: context.grip,
     testedAt: context.testedAt,
     hand: context.hand,
     notes: context.notes,
     tags: normalizedTags,
     referenceRole: context.referenceRole,
-    updatedAt: now,
+    updatedAt,
     auditLog: [
       ...normalizeAuditLog(session),
       {
-        id: auditEntryId(session.id, now, "metadata_updated"),
+        id: auditEntryId(session.id, updatedAt, "metadata_updated"),
         type: "metadata_updated",
-        createdAt: now,
+        createdAt: updatedAt,
         changes,
       },
     ],
@@ -199,10 +246,12 @@ export function updateTrackerSessionMetadata(
 }
 
 export function normalizeStoredTrackerSession(session: TrackerSession): TrackerSession {
+  const { repeaterPeakReview, ...storedSession } = session;
   return {
-    ...session,
+    ...storedSession,
     referenceRole: session.referenceRole === "healthy_hand_baseline" ? session.referenceRole : undefined,
     tags: normalizeTags(session.tags),
+    ...(session.mode === "repeater" ? { repeaterPeakReview: normalizeRepeaterPeakReview(repeaterPeakReview) } : {}),
     updatedAt: session.updatedAt ?? session.createdAt,
     auditLog: normalizeAuditLog(session),
   };
@@ -244,7 +293,17 @@ function normalizeAuditLog(session: TrackerSession): readonly TrackerSessionAudi
   return session.auditLog ?? [];
 }
 
-function tagsEqual(a: readonly string[], b: readonly string[]) {
+export function normalizeRepeaterPeakReview(review: RepeaterPeakReview | undefined): RepeaterPeakReview {
+  if (!review) return { candidates: [], excludedCandidateIds: [] };
+  const candidateIds = new Set(review.candidates.map((candidate) => candidate.id));
+  return {
+    candidates: review.candidates,
+    excludedCandidateIds: Array.from(new Set(review.excludedCandidateIds.filter((id) => candidateIds.size === 0 || candidateIds.has(id)))),
+    warning: review.warning,
+  };
+}
+
+export function orderedStringArraysEqual(a: readonly string[], b: readonly string[]) {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 

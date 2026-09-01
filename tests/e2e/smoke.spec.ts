@@ -55,6 +55,9 @@ test("imports endurance and repeater files, keeps history independent, and expos
   await page.locator("input[type=file]").setInputFiles("tests/fixtures/tindeq/repeaters/partial-two-reps.csv");
   await expect(page.getByRole("heading", { name: /partial-two-reps\.csv/i })).toBeVisible();
   await page.getByRole("button", { name: "half crimp", exact: true }).click();
+  await page.locator(".peak-exclusion-picker summary").click();
+  await page.locator(".peak-exclusion-option").first().getByRole("checkbox").check();
+  await expect(page.locator(".peak-exclusion-picker summary")).toContainText("1 selected");
   await page.getByRole("button", { name: /save local session/i }).click();
   await expect(page.getByText("Saved locally.", { exact: true })).toBeVisible();
 
@@ -73,6 +76,10 @@ test("imports endurance and repeater files, keeps history independent, and expos
   await page.getByRole("link", { name: /^History$/i }).first().click();
   await expect(page.getByRole("button", { name: /20mm edge.*Endurance/i })).toBeVisible();
   await expect(page.getByRole("button", { name: /half crimp.*Repeater/i })).toBeVisible();
+  await page.getByRole("button", { name: /half crimp.*Repeater/i }).click();
+  await expect(page.getByText("1 peak excluded")).toBeVisible();
+  await page.getByText("Source and audit").click();
+  await expect(page.getByText(/excluded Rep 1/i)).toBeVisible();
 });
 
 test("imports a healthy-hand baseline and compares rehab progress against it", async ({ page }) => {

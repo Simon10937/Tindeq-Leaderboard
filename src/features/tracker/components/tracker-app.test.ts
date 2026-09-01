@@ -26,6 +26,19 @@ describe("createDraftsFromCsvFiles", () => {
     expect(drafts[0].notes).toContain("8 reps");
   });
 
+  it("adds repeater peak candidates to supported repeater drafts", () => {
+    const drafts = createDraftsFromCsvFiles([
+      {
+        filename: "repeaters.zip / data_set_1.csv",
+        byteSize: 120,
+        source: ",Overall Avg\nAvg,0.0\nPeak,0.0\n,\ntime,weight\n0,0.2\n1,8\n2,10\n3,0.4\n4,8.5\n5,13\n6,0.3\n",
+      },
+    ], "file", 1);
+
+    expect(drafts[0].parsed?.repeaterPeakReview?.candidates).toHaveLength(2);
+    expect(drafts[0].parsed?.repeaterPeakReview?.excludedCandidateIds).toEqual([]);
+  });
+
   it("requires an explicit grip choice for unknown Tindeq tags", () => {
     const drafts = createDraftsFromCsvFiles([
       {
@@ -535,6 +548,20 @@ describe("handOptionsForSessions", () => {
     expect(resolveHandFilter("left", ["all", "right"])).toBe("all");
     expect(resolveHandFilter("right", ["all", "right"])).toBe("right");
   });
+
+  it("defaults to the hand with the most entries", () => {
+    expect(resolveHandFilter("auto", ["all", "left", "right"], [
+      { hand: "left" },
+      { hand: "right" },
+      { hand: "right" },
+      { hand: "both" },
+      {},
+    ])).toBe("right");
+    expect(resolveHandFilter("auto", ["all", "left", "right"], [
+      { hand: "left" },
+      { hand: "right" },
+    ])).toBe("all");
+  });
 });
 
 describe("latestComparableChange", () => {
@@ -643,5 +670,34 @@ describe("baselineComparisonForSessions", () => {
     } as const;
     expect(baselineStatusMessage({ status: "available", percent: 80, latest: point, baseline: point })).toBe("80%");
     expect(baselineStatusMessage({ status: "unavailable", reason: "Choose one metric" })).toBe("Baseline needs one metric.");
+  });
+
+  it("uses recalculated repeater metrics for baseline comparison", () => {
+    const comparison = baselineComparisonForSessions([
+      {
+        ...baseSession,
+        id: "baseline",
+        mode: "repeater",
+        hand: "left",
+        referenceRole: "healthy_hand_baseline",
+        metrics: [{ key: "peakForceN", label: "Peak force", value: 100, unit: "N", available: true }],
+        repeaterPeakReview: { candidates: [], excludedCandidateIds: ["peak-1"] },
+      },
+      {
+        ...baseSession,
+        id: "rehab",
+        mode: "repeater",
+        hand: "right",
+        metrics: [{ key: "peakForceN", label: "Peak force", value: 75, unit: "N", available: true }],
+        repeaterPeakReview: { candidates: [], excludedCandidateIds: ["peak-2"] },
+      },
+    ], {
+      mode: "repeater",
+      grip: "half crimp",
+      hand: "right",
+      metricKey: "peakForceN",
+    });
+
+    expect(comparison).toMatchObject({ status: "available", percent: 75 });
   });
 });
