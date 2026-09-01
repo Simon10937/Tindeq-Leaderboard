@@ -229,6 +229,30 @@ describe("createDraftsFromCsvFiles", () => {
     expect(peakValues[0]).toBeCloseTo(98.0665);
     expect(peakValues[1]).toBeCloseTo(117.6798);
   });
+
+  it("splits left-right max-force exports when the hand prefixes the metric name", () => {
+    const drafts = createDraftsFromCsvFiles([
+      {
+        filename: "peakforce_data_left_right_01_09_2026.csv",
+        byteSize: 301,
+        source: "date,tag,comment,unit,type,left max weight,right max weight,body weight,moment arm length left,moment arm length right,left force/BW,right force/BW,left torque,right torque,left torque/BW,right torque/BW,left %BW,right %BW,LSI force/BW,LSI torque/BW,norm force,norm force/BW,norm torque,norm torque/BW\n2026-01-09 10:20:08,chisel ,,SI,left/right,41.1994019,30.8556118,,,,,,,,,,,,,,,,,\n",
+      },
+    ], "file", 1);
+
+    expect(drafts).toHaveLength(2);
+    expect(drafts.map((draft) => draft.hand)).toEqual(["left", "right"]);
+    expect(drafts.every((draft) => draft.parsed?.mode === "peak_force")).toBe(true);
+    expect(drafts.map((draft) => draft.filename)).toEqual([
+      "peakforce_data_left_right_01_09_2026.csv (left)",
+      "peakforce_data_left_right_01_09_2026.csv (right)",
+    ]);
+    const peakValues = drafts.map((draft) => {
+      const metric = draft.parsed?.metrics.find((item) => item.key === "peakForceN");
+      return metric?.available ? metric.value : undefined;
+    });
+    expect(peakValues[0]).toBeCloseTo(41.1994019 * 9.80665);
+    expect(peakValues[1]).toBeCloseTo(30.8556118 * 9.80665);
+  });
 });
 
 describe("countSessionsThisWeek", () => {

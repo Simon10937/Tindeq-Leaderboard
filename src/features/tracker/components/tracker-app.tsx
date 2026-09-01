@@ -1410,18 +1410,36 @@ function normalizeMetadataRowsForHand(headers: readonly string[], values: readon
   const nextValues: string[] = [];
   let foundHandSpecificField = false;
   for (const [index, header] of headers.entries()) {
-    const normalized = normalizeCsvHeader(header);
-    const suffix = ` ${hand}`;
-    if (normalized.endsWith(suffix)) {
-      nextHeaders.push(header.trim().slice(0, -suffix.length));
+    const handSpecific = handSpecificMetadataHeader(header, hand);
+    if (handSpecific?.matches) {
+      nextHeaders.push(handSpecific.header);
       nextValues.push(values[index] ?? "");
       foundHandSpecificField = true;
-    } else if (!normalized.endsWith(" left") && !normalized.endsWith(" right")) {
+    } else if (!handSpecific?.belongsToOtherHand) {
       nextHeaders.push(header);
       nextValues.push(values[index] ?? "");
     }
   }
   return foundHandSpecificField ? { headers: nextHeaders, values: nextValues } : undefined;
+}
+
+type HandSpecificMetadataHeader =
+  | Readonly<{ matches: true; header: string }>
+  | Readonly<{ matches: false; belongsToOtherHand: true }>;
+
+function handSpecificMetadataHeader(header: string, hand: "left" | "right"): HandSpecificMetadataHeader | undefined {
+  const trimmed = header.trim();
+  const normalized = normalizeCsvHeader(trimmed);
+  const otherHand = hand === "left" ? "right" : "left";
+  const prefix = `${hand} `;
+  const suffix = ` ${hand}`;
+  const otherPrefix = `${otherHand} `;
+  const otherSuffix = ` ${otherHand}`;
+
+  if (normalized.startsWith(prefix)) return { matches: true, header: trimmed.slice(prefix.length) };
+  if (normalized.endsWith(suffix)) return { matches: true, header: trimmed.slice(0, -suffix.length) };
+  if (normalized.startsWith(otherPrefix) || normalized.endsWith(otherSuffix)) return { matches: false, belongsToOtherHand: true };
+  return undefined;
 }
 
 function normalizeCsvHeader(value: string) {
