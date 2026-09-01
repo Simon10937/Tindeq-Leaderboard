@@ -2,9 +2,9 @@ import { expect, test } from "@playwright/test";
 
 test("home renders the personal tracker", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /track grip progress\./i })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /0 \/ \d+ sessions/i })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /over time/i })).toBeVisible();
+  await expect(page.getByLabel("Tracker progress")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Repeater$/i })).toBeVisible();
+  await expect(page.getByText("VS BASELINE")).toBeVisible();
   await expect(page.getByText("Choose Tindeq ZIP or CSVs")).toBeHidden();
   await expect(page.getByText("Import new data")).toBeHidden();
   await expect(page.getByText("View progress")).toBeHidden();
@@ -60,18 +60,15 @@ test("imports endurance and repeater files, keeps history independent, and expos
 
   await page.getByRole("link", { name: /^Progress$/i }).first().click();
   await expect(page.getByRole("button", { name: /^Repeater$/i })).toHaveClass(/chip-selected/);
-  await expect(page.getByRole("button", { name: /^Repeater average force$/i })).toHaveClass(/chip-selected/);
-  await expect(page.getByRole("button", { name: /^Repeater average force$/i })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Repeater max force$/i })).toBeVisible();
+  await expect(page.getByLabel(/^Metric$/i)).toHaveValue("repeaterAverageForceN");
   await expect(page.locator(".chart-key")).toContainText(/avg repeater force/i);
   await expect(page.getByText(/trace-only for this metric/i)).toBeHidden();
-  await page.getByRole("button", { name: /^Repeater max force$/i }).click();
-  await expect(page.getByRole("img", { name: /progress over time/i })).toBeVisible();
+  await page.getByLabel(/^Metric$/i).selectOption("peakForceN");
+  await expect(page.getByRole("img", { name: /hand progress/i })).toBeVisible();
   await expect(page.getByText("Progress data")).toBeHidden();
 
   await page.getByRole("button", { name: /^Endurance$/i }).click();
-  await expect(page.getByRole("button", { name: /^Endurance average force$/i })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Endurance max force$/i })).toBeVisible();
+  await expect(page.getByLabel(/^Metric$/i)).toHaveValue("enduranceAverageForceN");
 
   await page.getByRole("link", { name: /^History$/i }).first().click();
   await expect(page.getByRole("button", { name: /20mm edge.*Endurance/i })).toBeVisible();
@@ -100,11 +97,11 @@ test("imports a healthy-hand baseline and compares rehab progress against it", a
 
   await page.getByRole("link", { name: /^Progress$/i }).first().click();
   await page.getByRole("button", { name: /^Peak force$/i }).click();
-  await page.getByRole("button", { name: /^Peak force max$/i }).click();
+  await page.getByLabel(/^Metric$/i).selectOption("peakForceN");
   await page.getByRole("button", { name: /^Right$/i }).click();
   await page.getByRole("button", { name: /^Baseline$/i }).click();
 
   await expect(page.getByText("VS BASELINE")).toBeVisible();
   await expect(page.getByText("80%")).toBeVisible();
-  await expect(page.locator(".chart-legend")).toContainText("Left healthy baseline");
+  await expect(page.locator(".chart-legend")).toContainText("Baseline");
 });

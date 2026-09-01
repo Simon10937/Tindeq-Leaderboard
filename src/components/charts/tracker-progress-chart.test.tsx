@@ -84,6 +84,6 @@ describe("TrackerProgressChart", () => {
     expect(markup).toContain("Healthy hand baseline");
     expect(markup).toContain("12.24 kg");
     expect(markup).toContain("stroke-dasharray=\"6 4\"");
-    expect(markup).toContain("<span>Healthy hand baseline</span>");
+    expect(markup).toContain("<span>Baseline</span>");
   });
 });

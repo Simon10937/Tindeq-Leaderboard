@@ -110,7 +110,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
     if (!supabase) {
       window.setTimeout(() => {
         setAuthState({ status: "local" });
-        void refreshSessions(localStore);
+        void seedLocalDemoSessions(localStore).then(() => refreshSessions(localStore));
       }, 0);
       return;
     }
@@ -521,17 +521,17 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
       </header>
 
       <main className="tracker-shell">
-        <section className="tracker-welcome" aria-labelledby="tracker-title">
+        {activeTab !== "progress" && <section className="tracker-welcome" aria-labelledby="tracker-title">
           <div>
             <p className="eyebrow">{pageHeading.eyebrow}</p>
             <h1 id="tracker-title">{pageHeading.title}</h1>
             <p className="lede">{pageHeading.description}</p>
           </div>
-          {activeTab !== "progress" && <div className="session-counter" aria-label={`${sessions.length} saved sessions`}>
+          <div className="session-counter" aria-label={`${sessions.length} saved sessions`}>
             <span>{sessions.length}</span>
             <small>saved session{sessions.length === 1 ? "" : "s"}</small>
-          </div>}
-        </section>
+          </div>
+        </section>}
 
         {status && activeTab !== "progress" && (
           <section className="tracker-panel status-panel" role="status">
@@ -540,13 +540,10 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
           </section>
         )}
 
-      {activeTab === "progress" && <section className="tracker-panel progress-panel progress-focus-panel" aria-labelledby="progress-title">
-        <div className="panel-heading progress-heading">
-          <div>
-            <p className="eyebrow">Progress</p>
-            <h2 id="progress-title">Over time</h2>
-          </div>
-          <div className="mode-chip-row" aria-label="Test mode">
+      {activeTab === "progress" && <section className="progress-workspace" aria-labelledby="progress-title">
+        <h1 id="progress-title" className="sr-only">Progress</h1>
+        <div className="progress-filter-stack">
+          <div className="mode-chip-row segmented-control" aria-label="Test mode">
             {availableModes.map((mode) => (
               <button
                 className={effectiveModeFilter === mode ? "chip chip-selected" : "chip"}
@@ -560,28 +557,6 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                 }}
               >
                 {modeLabel(mode)}
-              </button>
-            ))}
-          </div>
-        </div>
-        <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} referenceLines={baselineReferenceLines} />
-        <div className="plot-chip-area">
-          <div className="chip-list plot-chip-list" aria-label="Metric">
-            <button
-              className={selectedMetric === "all" ? "chip chip-selected" : "chip"}
-              type="button"
-              onClick={() => setSelectedMetric("all")}
-            >
-              All chartable
-            </button>
-            {availableMetricOptions.map((option) => (
-              <button
-                className={effectiveSelectedMetric === option.key ? "chip chip-selected" : "chip"}
-                key={option.key}
-                type="button"
-                onClick={() => setSelectedMetric(option.key)}
-              >
-                {option.label}
               </button>
             ))}
           </div>
@@ -600,32 +575,46 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
               </button>
             ))}
           </div>
-          {handOptions.length > 1 && (
-            <div className="chip-list plot-chip-list" aria-label="Hand">
-              {handOptions.map((hand) => (
-                <button
-                  className={effectiveHandFilter === hand ? "chip chip-selected" : "chip"}
-                  key={hand}
-                  type="button"
-                  onClick={() => setHandFilter(hand)}
-                >
-                  {handFilterLabel(hand)}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="chip-list plot-chip-list" aria-label="Baseline">
+          <div className="progress-control-row">
+            {handOptions.length > 1 && (
+              <div className="chip-list plot-chip-list hand-segmented-control" aria-label="Hand">
+                {handOptions.map((hand) => (
+                  <button
+                    className={effectiveHandFilter === hand ? "chip chip-selected" : "chip"}
+                    data-hand={hand}
+                    key={hand}
+                    type="button"
+                    onClick={() => setHandFilter(hand)}
+                  >
+                    {handFilterLabel(hand)}
+                  </button>
+                ))}
+              </div>
+            )}
             <button
-              className={baselineOverlayComparison ? "chip chip-selected" : "chip"}
+              className={baselineOverlayComparison ? "chip chip-selected baseline-toggle" : "chip baseline-toggle"}
               type="button"
               disabled={!availableBaselineComparison}
               onClick={() => setShowBaseline((current) => !current)}
             >
+              <span aria-hidden="true">↔</span>
               Baseline
             </button>
+            <label className="metric-select-label">
+              <span className="sr-only">Metric</span>
+              <select
+                aria-label="Metric"
+                value={effectiveSelectedMetric}
+                onChange={(event) => setSelectedMetric(event.currentTarget.value as TrackerMetricKey | "all")}
+              >
+                <option value="all">All chartable</option>
+                {availableMetricOptions.map((option) => (
+                  <option key={option.key} value={option.key}>{compactMetricOptionLabel(option.label)}</option>
+                ))}
+              </select>
+            </label>
           </div>
         </div>
-        {reimportNoticeCount > 0 && <p className="notice">{reimportNoticeCount} saved session{reimportNoticeCount === 1 ? "" : "s"} need re-import before all trace-derived force metrics can be derived.</p>}
         <div className="stat-grid stat-grid-compact progress-stat-grid">
           <div className="stat-card">
             <span>Latest</span>
@@ -648,6 +637,13 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
             <small>{baselineOverlayComparison ? `${formatMetricValue(baselineOverlayComparison.latest)} vs ${formatMetricValue(baselineOverlayComparison.baseline)}` : availableBaselineComparison ? "Turn on Baseline to compare." : baselineStatusMessage(baselineComparison)}</small>
           </div>
         </div>
+        <TrackerProgressChart
+          points={progressPoints}
+          selectedMetric={selectedMetricKey}
+          referenceLines={baselineReferenceLines}
+          title={progressChartTitle(effectiveHandFilter)}
+        />
+        {reimportNoticeCount > 0 && <p className="notice">{reimportNoticeCount} saved session{reimportNoticeCount === 1 ? "" : "s"} need re-import before all trace-derived force metrics can be derived.</p>}
         {(unavailableMetricOptions.length > 0 || progressSummary) && (
           <details className="metric-details">
             <summary>Chart details</summary>
@@ -1615,6 +1611,93 @@ function chartModesForSessions(sessions: readonly TrackerSession[]): ChartMode[]
   return ordered.filter((mode) => detected.size === 0 || detected.has(mode));
 }
 
+async function seedLocalDemoSessions(store: TrackerStore) {
+  if (process.env.NEXT_PUBLIC_LOCAL_DEMO !== "true") return;
+
+  await Promise.all(createLocalDemoRepeaterSessions().map((session) => store.save(session)));
+}
+
+function createLocalDemoRepeaterSessions(): TrackerSession[] {
+  const createdAt = "2026-09-01T09:00:00.000Z";
+  return [
+    createLocalDemoRepeaterSession({
+      id: "demo-repeater-open-hand-right-2026-08-14",
+      testedAt: "2026-08-14T09:00",
+      hand: "right",
+      averageForceN: 176,
+      peakForceN: 226,
+      createdAt,
+    }),
+    createLocalDemoRepeaterSession({
+      id: "demo-repeater-open-hand-right-2026-08-21",
+      testedAt: "2026-08-21T09:00",
+      hand: "right",
+      averageForceN: 188,
+      peakForceN: 238,
+      createdAt,
+    }),
+    createLocalDemoRepeaterSession({
+      id: "demo-repeater-open-hand-left-2026-08-21",
+      testedAt: "2026-08-21T09:05",
+      hand: "left",
+      averageForceN: 206,
+      peakForceN: 256,
+      createdAt,
+    }),
+  ];
+}
+
+function createLocalDemoRepeaterSession(input: Readonly<{
+  id: string;
+  testedAt: string;
+  hand: "left" | "right";
+  averageForceN: number;
+  peakForceN: number;
+  createdAt: string;
+}>): TrackerSession {
+  const grip = "open hand";
+
+  return {
+    id: input.id,
+    mode: "repeater",
+    parserVersion: "demo-repeater-csv/v1",
+    filename: `${input.id}.csv`,
+    sourceSummary: "Repeater",
+    vendorMetadata: {
+      Avg: String(input.averageForceN / 9.80665),
+      Peak: String(input.peakForceN / 9.80665),
+      Source: "Local demo smokecheck",
+    },
+    metrics: [
+      { key: "repeaterAverageForceN", label: "Repeater average force", value: input.averageForceN, unit: "N", available: true },
+      { key: "peakForceN", label: "Peak force", value: input.peakForceN, unit: "N", available: true },
+    ],
+    trace: {
+      elapsedUs: [0, 1000000, 2000000, 3000000, 4000000, 5000000],
+      forceN: [12, input.averageForceN * 0.82, input.peakForceN, input.averageForceN * 0.94, input.averageForceN * 0.76, 15],
+    },
+    warnings: [],
+    grip,
+    testedAt: input.testedAt,
+    hand: input.hand,
+    notes: "Demo repeater data for local smokecheck.",
+    tags: ["demo"],
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    auditLog: [{
+      id: `${input.id}-created-${input.createdAt}`,
+      type: "created",
+      createdAt: input.createdAt,
+      changes: [
+        { field: "grip", after: grip },
+        { field: "testedAt", after: input.testedAt },
+        { field: "hand", after: input.hand },
+        { field: "tags", after: ["demo"] },
+      ],
+    }],
+  };
+}
+
 function authTitle(authState: TrackerAuthState) {
   if (authState.status === "signed-in") return "Supabase sync on";
   if (authState.status === "checking") return "Checking private sync";
@@ -1764,10 +1847,16 @@ function sessionMatchesHandFilter(session: TrackerSession, handFilter: HandFilte
 }
 
 function handFilterLabel(handFilter: HandFilter) {
-  if (handFilter === "all") return "Both hands";
+  if (handFilter === "all") return "Both";
   if (handFilter === "left") return "Left";
   if (handFilter === "right") return "Right";
   return "Unspecified";
+}
+
+function progressChartTitle(handFilter: HandFilter) {
+  if (handFilter === "left") return "Left Hand Progress";
+  if (handFilter === "right") return "Right Hand Progress";
+  return "Hand Progress";
 }
 
 function availableMetricText(parsed?: ParsedTrackerCsv) {
@@ -1804,6 +1893,12 @@ function progressMetricLabel(key: TrackerMetricKey, mode?: TrackerMode) {
   if (mode === "repeater") return "Repeater max force";
   if (mode === "peak_force") return "Peak force max";
   return "Max force";
+}
+
+function compactMetricOptionLabel(label: string) {
+  if (label.toLowerCase().includes("average")) return "Avg force";
+  if (label.toLowerCase().includes("max")) return "Peak force";
+  return label;
 }
 
 function primaryAverageMetric(session: TrackerSession) {

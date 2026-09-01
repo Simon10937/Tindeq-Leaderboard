@@ -13,7 +13,7 @@
   --primary-panel: #2d4f3c;
   --danger: #93000a;
   --danger-panel: #ffdad6;
-  --shadow: 0 8px 20px rgba(25, 28, 30, 0.06);
+  --shadow: none;
 }
 
 * {
@@ -57,11 +57,11 @@ a {
 
 .app-bar {
   align-items: center;
-  background: rgba(247, 249, 251, 0.94);
+  background: var(--background);
   border-bottom: 1px solid var(--line);
   display: flex;
   gap: 16px;
-  height: 52px;
+  height: 64px;
   justify-content: space-between;
   padding: 0 16px;
   position: sticky;
@@ -101,12 +101,23 @@ a {
   text-transform: uppercase;
 }
 
+.sr-only {
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .brand-button {
   min-height: 36px;
 }
 
 .brand-mark strong {
-  font-size: 1.1rem;
+  font-size: 1.6rem;
 }
 
 .top-nav {
@@ -157,8 +168,8 @@ a {
   gap: 24px;
   margin: 0 auto;
   max-width: 1180px;
-  min-height: calc(100vh - 52px);
-  padding: 24px 16px 88px;
+  min-height: calc(100vh - 64px);
+  padding: 32px 16px 88px;
 }
 
 .status-panel {
@@ -324,18 +335,15 @@ label,
   min-width: 0;
 }
 
-.progress-stat-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.progress-focus-panel {
+.progress-workspace {
   display: grid;
-  gap: 10px;
+  gap: 24px;
 }
 
-.progress-heading {
-  align-items: end;
-  gap: 10px;
+.progress-filter-stack {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
 
 .mode-chip-row,
@@ -349,7 +357,7 @@ label,
 }
 
 .mode-chip-row {
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .mode-chip-row::-webkit-scrollbar,
@@ -357,38 +365,134 @@ label,
   display: none;
 }
 
+.segmented-control,
+.hand-segmented-control {
+  background: var(--surface-low);
+  border: 1px solid rgba(193, 200, 193, 0.55);
+  border-radius: 14px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+}
+
+.segmented-control .chip,
+.hand-segmented-control .chip {
+  border-color: transparent;
+  border-radius: 11px;
+  flex: 1 1 0;
+  justify-content: center;
+  min-height: 40px;
+  text-align: center;
+}
+
 .plot-chip-area {
   display: grid;
-  gap: 6px;
-  margin-top: -2px;
+  gap: 8px;
   min-width: 0;
 }
 
 .plot-chip-list {
-  margin-left: -2px;
-  padding: 1px 2px 4px;
+  padding: 0 0 4px;
 }
 
 .plot-chip-list .chip,
 .mode-chip-row .chip {
-  background: rgba(255, 255, 255, 0.62);
-  border-color: rgba(79, 94, 84, 0.28);
-  color: rgba(24, 32, 38, 0.74);
+  align-items: center;
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(84, 100, 122, 0.2);
+  color: #54647a;
+  display: inline-flex;
   flex: 0 0 auto;
-  font-size: 0.68rem;
-  min-height: 28px;
-  padding: 4px 9px;
-  text-transform: none;
+  font-size: 0.78rem;
+  min-height: 44px;
+  padding: 8px 18px;
+  text-transform: uppercase;
 }
 
-.progress-focus-panel .chip-selected {
-  background: rgba(22, 56, 38, 0.1);
-  border-color: rgba(22, 56, 38, 0.32);
+.progress-workspace .segmented-control .chip,
+.progress-workspace .hand-segmented-control .chip {
+  border-color: transparent;
+  border-radius: 11px;
+  flex: 1 1 0;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 12px;
+  text-align: center;
+}
+
+.progress-workspace .chip-selected {
+  background: rgba(45, 79, 60, 0.3);
+  border-color: rgba(45, 79, 60, 0.42);
   color: var(--primary);
 }
 
-.progress-focus-panel .tracker-chart > svg {
-  min-height: 0;
+.progress-workspace .segmented-control .chip-selected,
+.progress-workspace .hand-segmented-control .chip-selected {
+  border-color: rgba(45, 79, 60, 0.34);
+}
+
+.hand-segmented-control .chip-selected[data-hand="left"] {
+  background: rgba(13, 148, 136, 0.28);
+  border-color: rgba(13, 148, 136, 0.42);
+  color: #0f766e;
+}
+
+.hand-segmented-control .chip-selected[data-hand="right"] {
+  background: rgba(180, 83, 9, 0.28);
+  border-color: rgba(180, 83, 9, 0.42);
+  color: #92400e;
+}
+
+.progress-control-row {
+  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.progress-control-row .plot-chip-list {
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.baseline-toggle {
+  border-radius: 12px !important;
+  flex: 0 0 auto;
+  gap: 6px;
+  justify-content: center;
+  min-height: 46px !important;
+  padding-bottom: 10px !important;
+  padding-top: 10px !important;
+}
+
+.metric-select-label {
+  align-self: start;
+  display: block;
+  flex: 1 0 100%;
+  min-width: 0;
+  width: min(344px, 100%);
+}
+
+.metric-select-label select {
+  color: var(--primary);
+  font-size: 0.78rem;
+  font-weight: 800;
+  min-height: 44px;
+  text-transform: uppercase;
+}
+
+.progress-workspace .tracker-chart {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  gap: 16px;
+  padding: 24px;
+}
+
+.progress-workspace .tracker-chart > svg {
+  min-height: 300px;
 }
 
 .stat-card {
@@ -401,6 +505,51 @@ label,
 .stat-card strong,
 .stat-card small {
   overflow-wrap: anywhere;
+}
+
+.progress-stat-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.progress-stat-grid .stat-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 118px;
+  padding: 16px;
+}
+
+.progress-stat-grid .stat-card span {
+  color: #54647a;
+}
+
+.progress-stat-grid .stat-card strong {
+  color: var(--ink);
+  font-size: 1.65rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.progress-stat-grid .stat-card small {
+  color: var(--muted);
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  margin-top: auto;
+}
+
+.progress-stat-grid .stat-card:last-child {
+  background: rgba(45, 79, 60, 0.1);
+  border-color: rgba(45, 79, 60, 0.22);
+}
+
+.progress-stat-grid .stat-card:last-child span,
+.progress-stat-grid .stat-card:last-child strong,
+.progress-stat-grid .stat-card:last-child small {
+  color: var(--primary);
 }
 
 .import-actions {
@@ -841,16 +990,25 @@ textarea {
   margin: 0;
 }
 
+.chart-heading {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
 .tracker-chart figcaption {
-  color: var(--muted);
-  font-size: 0.86rem;
-  font-weight: 800;
+  color: var(--ink);
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.25;
 }
 
 .tracker-chart > svg {
-  background: var(--surface-low);
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  background: var(--surface);
+  border: 0;
+  border-radius: 0;
   color: var(--primary);
   display: block;
   height: auto;
@@ -859,19 +1017,25 @@ textarea {
 }
 
 .tracker-chart > svg circle {
-  fill: var(--surface);
-  stroke: var(--primary);
-  stroke-width: 2;
+  stroke-width: 1.5;
+}
+
+.chart-grid-line {
+  stroke: var(--line);
+  stroke-dasharray: 4 4;
+  stroke-width: 1;
 }
 
 .chart-legend {
   display: flex;
-  gap: 12px;
+  flex: 0 0 auto;
+  gap: 14px;
+  justify-content: flex-end;
   list-style: none;
-  margin: -4px 0 0;
+  margin: 0;
   min-width: 0;
   overflow-x: auto;
-  padding: 0 0 3px;
+  padding: 0;
   scrollbar-width: none;
 }
 
@@ -881,13 +1045,14 @@ textarea {
 
 .chart-legend li {
   align-items: center;
-  color: rgba(24, 32, 38, 0.72);
+  color: #54647a;
   display: flex;
   flex: 0 0 auto;
   font-size: 0.72rem;
-  font-weight: 700;
+  font-weight: 800;
   gap: 6px;
   max-width: min(320px, 78vw);
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -904,13 +1069,15 @@ textarea {
 }
 
 .axis-label {
-  fill: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 800;
+  fill: #54647a;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
 }
 
 .axis-tick {
-  fill: var(--muted);
+  fill: #54647a;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.72rem;
 }
 
@@ -984,26 +1151,25 @@ textarea {
 
 .bottom-nav {
   align-items: center;
-  background: rgba(247, 249, 251, 0.96);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  bottom: 12px;
-  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  bottom: max(12px, env(safe-area-inset-bottom, 0px));
-  box-shadow: 0 10px 30px rgba(18, 26, 22, 0.16);
+  background: var(--background);
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  bottom: 0;
+  box-shadow: none;
   display: none;
-  min-height: 68px;
+  min-height: 64px;
   justify-content: space-around;
-  left: 12px;
+  left: 0;
   padding: 0 12px;
   position: fixed;
-  right: 12px;
+  right: 0;
   z-index: 20;
 }
 
 .bottom-nav .tab-button {
   align-items: center;
-  border-radius: 8px;
+  border-radius: 12px;
   color: var(--muted);
   display: flex;
   flex-direction: column;
@@ -1012,12 +1178,13 @@ textarea {
   gap: 3px;
   justify-content: center;
   min-height: 52px;
-  min-width: 76px;
+  min-width: 86px;
   padding: 8px 10px;
   text-transform: uppercase;
 }
 
 .bottom-nav .active-tab {
+  background: rgba(45, 79, 60, 0.16);
   color: var(--primary);
 }
 
@@ -1046,13 +1213,17 @@ textarea {
   .auth-panel,
   .latest-panel,
   .import-panel,
-  .progress-heading,
   .panel-heading,
   .tracker-grid {
     grid-template-columns: 1fr;
   }
 
-  .mode-chip-row {
+  .metric-select-label {
+    width: min(344px, 100%);
+  }
+
+  .mode-chip-row,
+  .progress-filter-stack > .plot-chip-list {
     justify-content: flex-start;
     margin-left: -12px;
     margin-right: -12px;
@@ -1077,6 +1248,10 @@ textarea {
     min-width: 0;
   }
 
+  .progress-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
 }
 
 @media (max-width: 520px) {
@@ -1099,21 +1274,48 @@ textarea {
     font-size: 1.72rem;
   }
 
-  .progress-focus-panel {
+  .progress-workspace {
     gap: 10px;
   }
 
-  .plot-chip-list {
-    margin-left: -12px;
-    margin-right: -12px;
-    padding-left: 12px;
-    padding-right: 12px;
+  .progress-filter-stack {
+    gap: 12px;
+  }
+
+  .progress-control-row {
+    gap: 8px;
+  }
+
+  .progress-workspace .tracker-chart {
+    padding: 16px;
+  }
+
+  .chart-heading {
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .chart-legend {
+    flex-wrap: wrap;
+  }
+
+  .progress-workspace .tracker-chart > svg {
+    min-height: 260px;
   }
 
   .auth-actions,
-  .stat-grid,
-  .progress-stat-grid {
+  .stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  .progress-stat-grid {
+    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .progress-stat-grid .stat-card {
+    min-height: 144px;
+    padding: 12px;
   }
 
   .session-list li {

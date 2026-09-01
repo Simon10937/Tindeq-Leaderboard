@@ -8,6 +8,7 @@ type Props = Readonly<{
   points: readonly ProgressPoint[];
   selectedMetric?: TrackerMetricKey;
   referenceLines?: readonly ProgressReferenceLine[];
+  title?: string;
 }>;
 export type ProgressReferenceLine = Readonly<{
   key: string;
@@ -28,7 +29,7 @@ type ProgressSeries = {
   styleLabel: string;
 };
 
-export function TrackerProgressChart({ points, selectedMetric, referenceLines = [] }: Props) {
+export function TrackerProgressChart({ points, selectedMetric, referenceLines = [], title = "Progress over time" }: Props) {
   const visible = selectedMetric ? points.filter((point) => point.metricKey === selectedMetric) : points;
   if (visible.length === 0) return <p role="status">No progress metrics are available for these filters yet.</p>;
 
@@ -48,25 +49,27 @@ export function TrackerProgressChart({ points, selectedMetric, referenceLines = 
 
   return (
     <figure className="tracker-chart" aria-labelledby="progress-chart-title">
-      <figcaption id="progress-chart-title">Progress over time</figcaption>
-      <ul className="chart-legend" aria-label="Visible progress chart series">
-        {series.map((item) => (
-          <li key={item.key}>
-            <svg aria-hidden="true" focusable="false" viewBox="0 0 34 8" style={{ color: item.color }}>
-              <path d="M2 4H32" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2.5" strokeDasharray={item.dash} />
-            </svg>
-            <span>{item.label}</span>
-          </li>
-        ))}
-        {visibleReferenceLines.map((line) => (
-          <li key={line.key}>
-            <svg aria-hidden="true" focusable="false" viewBox="0 0 34 8" style={{ color: line.color }}>
-              <path d="M2 4H32" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2.5" strokeDasharray={line.dash} />
-            </svg>
-            <span>{line.label}</span>
-          </li>
-        ))}
-      </ul>
+      <div className="chart-heading">
+        <figcaption id="progress-chart-title">{title}</figcaption>
+        <ul className="chart-legend" aria-label="Visible progress chart series">
+          {series.map((item) => (
+            <li key={item.key}>
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 34 8" style={{ color: item.color }}>
+                <path d="M2 4H32" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2.5" strokeDasharray={item.dash} />
+              </svg>
+              <span>{item.label}</span>
+            </li>
+          ))}
+          {visibleReferenceLines.map((line) => (
+            <li key={line.key}>
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 34 8" style={{ color: line.color }}>
+                <path d="M2 4H32" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2.5" strokeDasharray={line.dash} />
+              </svg>
+              <span>{shortReferenceLineLabel(line)}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
       <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-labelledby="progress-chart-title" aria-describedby="progress-chart-description">
         <desc id="progress-chart-description">Progress force values in kilograms over time. The same values are listed in the table after the chart.</desc>
         <line x1={chartPad.left} y1={HEIGHT - chartPad.bottom} x2={WIDTH - chartPad.right} y2={HEIGHT - chartPad.bottom} stroke="currentColor" />
@@ -75,6 +78,7 @@ export function TrackerProgressChart({ points, selectedMetric, referenceLines = 
         <text className="axis-label" x={WIDTH - chartPad.right} y={HEIGHT - 6} textAnchor="end">Date</text>
         {valueTicks.map((tick) => (
           <g key={`value-${tick}`}>
+            <line className="chart-grid-line" x1={chartPad.left} y1={y(tick)} x2={WIDTH - chartPad.right} y2={y(tick)} />
             <line x1={chartPad.left - 4} y1={y(tick)} x2={chartPad.left} y2={y(tick)} stroke="currentColor" />
             <text className="axis-tick" x={chartPad.left - 7} y={y(tick) + 4} textAnchor="end">{formatScore(tick)}</text>
           </g>
@@ -90,9 +94,9 @@ export function TrackerProgressChart({ points, selectedMetric, referenceLines = 
           const path = ordered.map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${x(Date.parse(point.testedAt))} ${y(displayValue(point))}`).join(" ");
           return (
             <g key={item.key}>
-              <path d={path} fill="none" stroke={item.color} strokeWidth="3" strokeDasharray={item.dash} />
+              <path d={path} fill="none" stroke={item.color} strokeWidth="2" strokeDasharray={item.dash} vectorEffect="non-scaling-stroke" />
               {ordered.map((point) => (
-                <circle key={`${point.sessionId}-${point.metricKey}`} cx={x(Date.parse(point.testedAt))} cy={y(displayValue(point))} r="3.25" style={{ stroke: item.color }}>
+                <circle key={`${point.sessionId}-${point.metricKey}`} cx={x(Date.parse(point.testedAt))} cy={y(displayValue(point))} r="3" style={{ fill: item.color, stroke: item.color }} vectorEffect="non-scaling-stroke">
                   <title>{`${item.fullLabel}: ${formatMetricValue(point)} on ${formatCompactDate(point.testedAt)}`}</title>
                 </circle>
               ))}
@@ -107,9 +111,10 @@ export function TrackerProgressChart({ points, selectedMetric, referenceLines = 
             x2={WIDTH - chartPad.right}
             y2={y(displayReferenceLineValue(line))}
             stroke={line.color}
-            strokeWidth="2.5"
+            strokeWidth="1.5"
             strokeDasharray={line.dash}
             strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
           >
             <title>{`${line.label}: ${formatMetricValue(line)}`}</title>
           </line>
@@ -184,6 +189,11 @@ function handLabel(hand?: ProgressPoint["hand"]) {
   if (hand === "right") return "Right";
   if (hand === "both") return "Both";
   return "Unspecified";
+}
+
+function shortReferenceLineLabel(line: ProgressReferenceLine) {
+  if (line.label.toLowerCase().includes("baseline")) return "Baseline";
+  return line.label;
 }
 
 function shortMetricLabel(point: ProgressPoint) {
