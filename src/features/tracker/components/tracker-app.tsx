@@ -1,7 +1,7 @@
 "use client";
 
 import { type ClipboardEvent, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { TrackerProgressChart } from "@/components/charts/tracker-progress-chart";
+import { TrackerProgressChart, type ProgressReferenceLine } from "@/components/charts/tracker-progress-chart";
 import { TrackerTraceChart } from "@/components/charts/tracker-trace-chart";
 import { formatCompactDate, formatMetricValue, formatProgressMetricLabel } from "@/components/charts/chart-utils";
 import { extractCsvFiles, type ExtractedCsvFile } from "@/features/tracker/import/extract-files";
@@ -24,13 +24,14 @@ type DraftImport = Readonly<{
   hand: "" | "left" | "right" | "both";
   notes: string;
   tags: readonly string[];
+  referenceRole?: "healthy_hand_baseline";
   expanded: boolean;
   saved?: boolean;
   unsupportedFilenames?: readonly string[];
   gripSuggestion?: string;
 }>;
 
-type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "hand" | "notes" | "tags">>;
+type DraftDefaults = Partial<Pick<DraftImport, "grip" | "testedAt" | "hand" | "notes" | "tags" | "referenceRole">>;
 type SelectedMetric = "auto" | "all" | TrackerMetricKey;
 type AvailableMetric = Extract<TrackerSession["metrics"][number], { available: true }>;
 type ActiveTab = "progress" | "import" | "history";
@@ -40,6 +41,15 @@ type SessionEditState = Readonly<{ sessionId: string; context: ImportContext }>;
 type MetricOption = Readonly<{ key: TrackerMetricKey; label: string; mode?: TrackerMode }>;
 type StorageMode = "local" | "supabase";
 type SyncPrompt = Readonly<{ userId: string; localSessionCount: number }>;
+type BaselineComparisonFilters = Readonly<{
+  mode: ChartMode;
+  grip: string;
+  hand: HandFilter;
+  metricKey?: TrackerMetricKey;
+}>;
+type BaselineComparison =
+  | Readonly<{ status: "available"; baseline: ProgressPoint; latest: ProgressPoint; percent: number }>
+  | Readonly<{ status: "unavailable"; reason: "Choose left or right hand" | "Choose one metric" | "No matching rehab-side data" | "No matching healthy-hand baseline" }>;
 type AuthDescriptionState =
   | { status: "local" | "checking" | "signed-out" }
   | { status: "signed-in"; email?: string };
@@ -70,6 +80,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const [modeFilter, setModeFilter] = useState<ChartMode>("repeater");
   const [gripFilter, setGripFilter] = useState("all");
   const [handFilter, setHandFilter] = useState<HandFilter>("all");
+  const [showBaseline, setShowBaseline] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
   const [status, setStatus] = useState<string | undefined>();
   const [reimportNoticeCount, setReimportNoticeCount] = useState(0);
@@ -234,6 +245,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
       hand: draft.hand || undefined,
       notes: draft.notes,
       tags: draft.tags,
+      referenceRole: draft.referenceRole,
     });
     if (!validation.ok) {
       setStatus(validation.errors.join(" "));
@@ -404,6 +416,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
         hand: session.hand,
         notes: session.notes,
         tags: normalizeTags(session.tags),
+        referenceRole: session.referenceRole,
       },
     });
     setSessionTagInput("");
@@ -453,8 +466,9 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
   const handOptions = useMemo(() => handOptionsForSessions(modeGripSessions), [modeGripSessions]);
   const effectiveHandFilter = resolveHandFilter(handFilter, handOptions);
   const filteredSessions = modeGripSessions.filter((session) => sessionMatchesHandFilter(session, effectiveHandFilter));
+  const progressSessions = filteredSessions.filter((session) => session.referenceRole !== "healthy_hand_baseline");
   const historySessions = sessions;
-  const metricAvailability = useMemo(() => summarizeMetricAvailability(filteredSessions), [filteredSessions]);
+  const metricAvailability = useMemo(() => summarizeMetricAvailability(progressSessions), [progressSessions]);
   const modeMetricOptions = metricOptionsForMode(effectiveModeFilter);
   const availableMetricOptions = modeMetricOptions.filter((option) => metricAvailability.get(option.key)?.count);
   const unavailableMetricOptions = modeMetricOptions.filter((option) => !metricAvailability.get(option.key)?.count);
@@ -466,17 +480,26 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
       ? preferredMetric ?? "all"
       : selectedMetric;
   const selectedMetricKey = effectiveSelectedMetric === "all" ? undefined : effectiveSelectedMetric;
-  const progressPoints = filteredSessions.flatMap((session) => progressPointsForSession(session, selectedMetricKey));
+  const progressPoints = progressSessions.flatMap((session) => progressPointsForSession(session, selectedMetricKey));
   const summaryMetricKey = selectedMetricKey ?? preferredMetric;
-  const summaryPoints = summaryMetricKey ? filteredSessions.flatMap((session) => progressPointsForSession(session, summaryMetricKey)) : [];
+  const summaryPoints = summaryMetricKey ? progressSessions.flatMap((session) => progressPointsForSession(session, summaryMetricKey)) : [];
+  const baselineComparison = baselineComparisonForSessions(sessions, {
+    mode: effectiveModeFilter,
+    grip: effectiveGripFilter,
+    hand: effectiveHandFilter,
+    metricKey: selectedMetricKey,
+  });
+  const availableBaselineComparison = baselineComparison.status === "available" ? baselineComparison : undefined;
+  const baselineOverlayComparison = showBaseline ? availableBaselineComparison : undefined;
+  const baselineReferenceLines = baselineOverlayComparison ? [baselineReferenceLine(baselineOverlayComparison)] : [];
   const progressSummary = summarizeProgressPoints(progressPoints);
   const latestSummaryPoint = latestProgressPoint(summaryPoints);
   const previousChange = latestComparableChange(summaryPoints);
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? historySessions[0];
-  const latestSession = filteredSessions[0];
+  const latestSession = progressSessions[0];
   const latestAverage = latestSession ? primaryAverageMetric(latestSession) : undefined;
   const latestPeak = latestSession ? metricValue(latestSession, "peakForceN") : undefined;
-  const latestFilteredSession = filteredSessions[0];
+  const latestFilteredSession = progressSessions[0];
   const personalBest = bestProgressPoint(summaryPoints);
   const weeklyCount = countSessionsThisWeek(sessions);
   const weeklyPercent = Math.min(100, Math.round((weeklyCount / weeklyTarget) * 100));
@@ -541,7 +564,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
             ))}
           </div>
         </div>
-        <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} />
+        <TrackerProgressChart points={progressPoints} selectedMetric={selectedMetricKey} referenceLines={baselineReferenceLines} />
         <div className="plot-chip-area">
           <div className="chip-list plot-chip-list" aria-label="Metric">
             <button
@@ -591,6 +614,16 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
               ))}
             </div>
           )}
+          <div className="chip-list plot-chip-list" aria-label="Baseline">
+            <button
+              className={baselineOverlayComparison ? "chip chip-selected" : "chip"}
+              type="button"
+              disabled={!availableBaselineComparison}
+              onClick={() => setShowBaseline((current) => !current)}
+            >
+              Baseline
+            </button>
+          </div>
         </div>
         {reimportNoticeCount > 0 && <p className="notice">{reimportNoticeCount} saved session{reimportNoticeCount === 1 ? "" : "s"} need re-import before all trace-derived force metrics can be derived.</p>}
         <div className="stat-grid stat-grid-compact progress-stat-grid">
@@ -608,6 +641,11 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
             <span>Personal best</span>
             <strong>{personalBest ? formatMetricValue(personalBest) : "--"}</strong>
             <small>{personalBest ? progressMetricLabel(personalBest.metricKey, personalBest.mode) : "No chart points"}</small>
+          </div>
+          <div className="stat-card">
+            <span>VS BASELINE</span>
+            <strong>{baselineOverlayComparison ? formatBaselinePercent(baselineOverlayComparison.percent) : "--"}</strong>
+            <small>{baselineOverlayComparison ? `${formatMetricValue(baselineOverlayComparison.latest)} vs ${formatMetricValue(baselineOverlayComparison.baseline)}` : availableBaselineComparison ? "Turn on Baseline to compare." : baselineStatusMessage(baselineComparison)}</small>
           </div>
         </div>
         {(unavailableMetricOptions.length > 0 || progressSummary) && (
@@ -756,6 +794,14 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                       <option value="both">Both</option>
                     </select>
                   </label>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={draft.referenceRole === "healthy_hand_baseline"}
+                      onChange={(event) => updateDraft(draft.id, { referenceRole: event.currentTarget.checked ? "healthy_hand_baseline" : undefined })}
+                    />
+                    <span>Healthy hand baseline</span>
+                  </label>
                   <label className="draft-notes">Notes
                     <textarea value={draft.notes} onChange={(event) => updateDraft(draft.id, { notes: event.currentTarget.value })} />
                   </label>
@@ -793,7 +839,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                     <span className="session-date">{formatCompactDate(session.testedAt)}</span>
                     <span>
                       <strong>{session.grip}</strong>
-                      <small>{modeLabel(session.mode)} - {sessionMetricLine(session)}</small>
+                      <small>{modeLabel(session.mode)} - {sessionMetricLine(session)}{session.referenceRole === "healthy_hand_baseline" ? " - healthy baseline" : ""}</small>
                     </span>
                   </button>
                   <button className="text-button" type="button" onClick={() => void deleteSession(session.id)}>Delete</button>
@@ -834,6 +880,17 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                       <option value="both">Both</option>
                     </select>
                   </label>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={sessionEdit.context.referenceRole === "healthy_hand_baseline"}
+                      onChange={(event) => {
+                        const referenceRole = event.currentTarget.checked ? "healthy_hand_baseline" : undefined;
+                        setSessionEdit((current) => current ? { ...current, context: { ...current.context, referenceRole } } : current);
+                      }}
+                    />
+                    <span>Healthy hand baseline</span>
+                  </label>
                   <label className="draft-notes">Notes
                     <textarea value={sessionEdit.context.notes ?? ""} onChange={(event) => {
                       const notes = event.currentTarget.value;
@@ -859,6 +916,7 @@ export function TrackerApp({ initialTab = "progress" }: Readonly<{ initialTab?: 
                   <div className="session-meta">
                     <span>{selectedSession.grip}</span>
                     {selectedSession.hand && <span>{selectedSession.hand}</span>}
+                    {selectedSession.referenceRole === "healthy_hand_baseline" && <span>healthy baseline</span>}
                     {visibleSessionTags(selectedSession).map((tag) => <span key={tag}>{tag}</span>)}
                   </div>
                   <div className="form-actions">
@@ -1794,6 +1852,64 @@ export function latestComparableChange(points: readonly ProgressPoint[]) {
     previous,
     delta,
     percent: previous.value === 0 ? undefined : delta / previous.value,
+  };
+}
+
+export function baselineComparisonForSessions(sessions: readonly TrackerSession[], filters: BaselineComparisonFilters): BaselineComparison {
+  if (filters.hand !== "left" && filters.hand !== "right") return { status: "unavailable", reason: "Choose left or right hand" };
+  if (!filters.metricKey) return { status: "unavailable", reason: "Choose one metric" };
+
+  const latest = latestProgressPoint(sessions
+    .filter((session) =>
+      session.referenceRole !== "healthy_hand_baseline" &&
+      session.mode === filters.mode &&
+      session.grip === filters.grip &&
+      session.hand === filters.hand)
+    .flatMap((session) => progressPointsForSession(session, filters.metricKey))
+    .filter((point) => point.value > 0 && Number.isFinite(point.value)));
+  if (!latest) return { status: "unavailable", reason: "No matching rehab-side data" };
+
+  const oppositeHand = filters.hand === "left" ? "right" : "left";
+  const baseline = latestProgressPoint(sessions
+    .filter((session) =>
+      session.referenceRole === "healthy_hand_baseline" &&
+      session.mode === filters.mode &&
+      session.grip === filters.grip &&
+      session.hand === oppositeHand)
+    .flatMap((session) => progressPointsForSession(session, filters.metricKey))
+    .filter((point) => point.value > 0 && Number.isFinite(point.value)));
+  if (!baseline) return { status: "unavailable", reason: "No matching healthy-hand baseline" };
+
+  return {
+    status: "available",
+    baseline,
+    latest,
+    percent: latest.value / baseline.value * 100,
+  };
+}
+
+export function baselineStatusMessage(comparison: BaselineComparison) {
+  if (comparison.status === "available") return formatBaselinePercent(comparison.percent);
+  if (comparison.reason === "Choose one metric") return "Baseline needs one metric.";
+  if (comparison.reason === "Choose left or right hand") return "Baseline needs left or right hand.";
+  if (comparison.reason === "No matching rehab-side data") return "No matching rehab-side data.";
+  return "No matching healthy-hand baseline.";
+}
+
+function formatBaselinePercent(percent: number) {
+  return `${Math.round(percent)}%`;
+}
+
+function baselineReferenceLine(comparison: Extract<BaselineComparison, { status: "available" }>): ProgressReferenceLine {
+  const hand = comparison.baseline.hand === "left" ? "Left" : "Right";
+  return {
+    key: `${comparison.baseline.sessionId}-${comparison.baseline.metricKey}-healthy-baseline`,
+    label: `${hand} healthy baseline`,
+    value: comparison.baseline.value,
+    unit: comparison.baseline.unit,
+    metricKey: comparison.baseline.metricKey,
+    color: "#475569",
+    dash: "6 4",
   };
 }
 

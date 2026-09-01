@@ -60,7 +60,7 @@ test("imports endurance and repeater files, keeps history independent, and expos
 
   await page.getByRole("link", { name: /^Progress$/i }).first().click();
   await expect(page.getByRole("button", { name: /^Repeater$/i })).toHaveClass(/chip-selected/);
-  await expect(page.getByRole("button", { name: /^All chartable$/i })).toHaveClass(/chip-selected/);
+  await expect(page.getByRole("button", { name: /^Repeater average force$/i })).toHaveClass(/chip-selected/);
   await expect(page.getByRole("button", { name: /^Repeater average force$/i })).toBeVisible();
   await expect(page.getByRole("button", { name: /^Repeater max force$/i })).toBeVisible();
   await expect(page.locator(".chart-key")).toContainText(/avg repeater force/i);
@@ -76,4 +76,35 @@ test("imports endurance and repeater files, keeps history independent, and expos
   await page.getByRole("link", { name: /^History$/i }).first().click();
   await expect(page.getByRole("button", { name: /20mm edge.*Endurance/i })).toBeVisible();
   await expect(page.getByRole("button", { name: /half crimp.*Repeater/i })).toBeVisible();
+});
+
+test("imports a healthy-hand baseline and compares rehab progress against it", async ({ page }) => {
+  await page.goto("/import");
+  await page.locator("input[type=file]").setInputFiles("tests/fixtures/tindeq/max-force/peakforce-baseline-left.csv");
+
+  await expect(page.getByRole("heading", { name: /peakforce-baseline-left\.csv/i })).toBeVisible();
+  await page.locator(".draft-fields select").selectOption("left");
+  await page.getByLabel(/healthy hand baseline/i).check();
+  await page.getByRole("button", { name: /save local session/i }).click();
+  await expect(page.getByText("Saved locally.", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: /dismiss saved imports/i }).click();
+  await page.locator("input[type=file]").setInputFiles("tests/fixtures/tindeq/max-force/peakforce-rehab-right.csv");
+  await expect(page.getByRole("heading", { name: /peakforce-rehab-right\.csv/i })).toBeVisible();
+  await page.locator(".draft-fields select").selectOption("right");
+  await page.getByRole("button", { name: /save local session/i }).click();
+  await expect(page.getByText("Saved locally.", { exact: true })).toBeVisible();
+
+  await page.getByRole("link", { name: /^History$/i }).first().click();
+  await expect(page.getByText(/healthy baseline/i)).toBeVisible();
+
+  await page.getByRole("link", { name: /^Progress$/i }).first().click();
+  await page.getByRole("button", { name: /^Peak force$/i }).click();
+  await page.getByRole("button", { name: /^Peak force max$/i }).click();
+  await page.getByRole("button", { name: /^Right$/i }).click();
+  await page.getByRole("button", { name: /^Baseline$/i }).click();
+
+  await expect(page.getByText("VS BASELINE")).toBeVisible();
+  await expect(page.getByText("80%")).toBeVisible();
+  await expect(page.locator(".chart-legend")).toContainText("Left healthy baseline");
 });

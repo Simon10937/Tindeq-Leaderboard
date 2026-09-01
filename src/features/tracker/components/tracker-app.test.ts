@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authDescription, countSessionsThisWeek, createDraftsFromCsvFiles, gripOptionsForMode, gripSuggestionsForSessionsAndDrafts, handOptionsForSessions, latestComparableChange, localUploadConflictMessage, localUploadFailureMessage, localUploadPromptMessage, normalizeWeeklyTarget, resetConfirmationMessage, resetStatusMessage, resolveGripFilter, resolveHandFilter, shouldIgnoreSignedInAuthEvent, supabaseReadyMessage, uploadLocalSessions, visibleSessionTags } from "./tracker-app";
+import { baselineComparisonForSessions, baselineStatusMessage, authDescription, countSessionsThisWeek, createDraftsFromCsvFiles, gripOptionsForMode, gripSuggestionsForSessionsAndDrafts, handOptionsForSessions, latestComparableChange, localUploadConflictMessage, localUploadFailureMessage, localUploadPromptMessage, normalizeWeeklyTarget, resetConfirmationMessage, resetStatusMessage, resolveGripFilter, resolveHandFilter, shouldIgnoreSignedInAuthEvent, supabaseReadyMessage, uploadLocalSessions, visibleSessionTags } from "./tracker-app";
 import type { TrackerSession } from "@/features/tracker/types";
 
 describe("createDraftsFromCsvFiles", () => {
@@ -554,5 +554,94 @@ describe("latestComparableChange", () => {
     ]);
 
     expect(change).toBeUndefined();
+  });
+});
+
+describe("baselineComparisonForSessions", () => {
+  const baseSession: TrackerSession = {
+    id: "base",
+    mode: "peak_force",
+    parserVersion: "test",
+    filename: "test.csv",
+    sourceSummary: "Peak force",
+    vendorMetadata: {},
+    metrics: [{ key: "peakForceN", label: "Max force", value: 100, unit: "N", available: true }],
+    trace: { elapsedUs: [], forceN: [] },
+    warnings: [],
+    grip: "half crimp",
+    testedAt: "2026-08-24T12:00:00.000Z",
+    createdAt: "2026-08-24T12:00:00.000Z",
+  };
+
+  it("compares the latest selected-hand point against the newest opposite-hand baseline", () => {
+    const comparison = baselineComparisonForSessions([
+      { ...baseSession, id: "old-baseline", hand: "left", referenceRole: "healthy_hand_baseline", testedAt: "2026-08-20T10:00:00.000Z", metrics: [{ key: "peakForceN", label: "Max force", value: 90, unit: "N", available: true }] },
+      { ...baseSession, id: "new-baseline", hand: "left", referenceRole: "healthy_hand_baseline", testedAt: "2026-08-22T10:00:00.000Z", metrics: [{ key: "peakForceN", label: "Max force", value: 100, unit: "N", available: true }] },
+      { ...baseSession, id: "right-old", hand: "right", testedAt: "2026-08-23T10:00:00.000Z", metrics: [{ key: "peakForceN", label: "Max force", value: 75, unit: "N", available: true }] },
+      { ...baseSession, id: "right-new", hand: "right", testedAt: "2026-08-24T10:00:00.000Z", metrics: [{ key: "peakForceN", label: "Max force", value: 80, unit: "N", available: true }] },
+      { ...baseSession, id: "right-baseline", hand: "right", referenceRole: "healthy_hand_baseline", testedAt: "2026-08-25T10:00:00.000Z", metrics: [{ key: "peakForceN", label: "Max force", value: 200, unit: "N", available: true }] },
+    ], {
+      mode: "peak_force",
+      grip: "half crimp",
+      hand: "right",
+      metricKey: "peakForceN",
+    });
+
+    expect(comparison).toMatchObject({
+      status: "available",
+      percent: 80,
+    });
+    if (comparison.status === "available") {
+      expect(comparison.baseline.sessionId).toBe("new-baseline");
+      expect(comparison.latest.sessionId).toBe("right-new");
+    }
+  });
+
+  it("ignores invalid baseline candidates", () => {
+    const comparison = baselineComparisonForSessions([
+      { ...baseSession, id: "both", hand: "both", referenceRole: "healthy_hand_baseline" },
+      { ...baseSession, id: "wrong-grip", hand: "left", grip: "jug", referenceRole: "healthy_hand_baseline" },
+      { ...baseSession, id: "zero", hand: "left", referenceRole: "healthy_hand_baseline", metrics: [{ key: "peakForceN", label: "Max force", value: 0, unit: "N", available: true }] },
+      { ...baseSession, id: "right", hand: "right", metrics: [{ key: "peakForceN", label: "Max force", value: 80, unit: "N", available: true }] },
+    ], {
+      mode: "peak_force",
+      grip: "half crimp",
+      hand: "right",
+      metricKey: "peakForceN",
+    });
+
+    expect(comparison).toEqual({ status: "unavailable", reason: "No matching healthy-hand baseline" });
+  });
+
+  it("requires a concrete hand and single metric", () => {
+    expect(baselineComparisonForSessions([baseSession], {
+      mode: "peak_force",
+      grip: "half crimp",
+      hand: "all",
+      metricKey: "peakForceN",
+    })).toEqual({ status: "unavailable", reason: "Choose left or right hand" });
+
+    expect(baselineComparisonForSessions([baseSession], {
+      mode: "peak_force",
+      grip: "half crimp",
+      hand: "right",
+      metricKey: undefined,
+    })).toEqual({ status: "unavailable", reason: "Choose one metric" });
+  });
+
+  it("formats baseline status messages", () => {
+    const point = {
+      sessionId: "right",
+      mode: "peak_force",
+      grip: "half crimp",
+      hand: "right",
+      testedAt: "2026-08-24T12:00:00.000Z",
+      metricKey: "peakForceN",
+      label: "Max force",
+      value: 80,
+      unit: "N",
+    } as const;
+    expect(baselineStatusMessage({ status: "available", percent: 80, latest: point, baseline: point })).toBe("80%");
+    expect(baselineStatusMessage({ status: "unavailable", reason: "Choose one metric" })).toBe("Baseline needs one metric.");
   });
 });

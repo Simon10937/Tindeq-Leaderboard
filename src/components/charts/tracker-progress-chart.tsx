@@ -7,6 +7,16 @@ const HEIGHT = 420;
 type Props = Readonly<{
   points: readonly ProgressPoint[];
   selectedMetric?: TrackerMetricKey;
+  referenceLines?: readonly ProgressReferenceLine[];
+}>;
+export type ProgressReferenceLine = Readonly<{
+  key: string;
+  label: string;
+  value: number;
+  unit: "N";
+  metricKey: TrackerMetricKey;
+  color: string;
+  dash?: string;
 }>;
 type ProgressSeries = {
   key: string;
@@ -18,13 +28,14 @@ type ProgressSeries = {
   styleLabel: string;
 };
 
-export function TrackerProgressChart({ points, selectedMetric }: Props) {
+export function TrackerProgressChart({ points, selectedMetric, referenceLines = [] }: Props) {
   const visible = selectedMetric ? points.filter((point) => point.metricKey === selectedMetric) : points;
   if (visible.length === 0) return <p role="status">No progress metrics are available for these filters yet.</p>;
 
   const series = groupProgressSeries(visible, selectedMetric === undefined);
+  const visibleReferenceLines = referenceLines.filter((line) => !selectedMetric || line.metricKey === selectedMetric);
   const times = visible.map((point) => Date.parse(point.testedAt));
-  const values = visible.map(displayValue);
+  const values = [...visible.map(displayValue), ...visibleReferenceLines.map(displayReferenceLineValue)];
   const timeMin = Math.min(...times);
   const timeMax = Math.max(...times);
   const valueMin = Math.min(...values);
@@ -45,6 +56,14 @@ export function TrackerProgressChart({ points, selectedMetric }: Props) {
               <path d="M2 4H32" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2.5" strokeDasharray={item.dash} />
             </svg>
             <span>{item.label}</span>
+          </li>
+        ))}
+        {visibleReferenceLines.map((line) => (
+          <li key={line.key}>
+            <svg aria-hidden="true" focusable="false" viewBox="0 0 34 8" style={{ color: line.color }}>
+              <path d="M2 4H32" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2.5" strokeDasharray={line.dash} />
+            </svg>
+            <span>{line.label}</span>
           </li>
         ))}
       </ul>
@@ -80,11 +99,27 @@ export function TrackerProgressChart({ points, selectedMetric }: Props) {
             </g>
           );
         })}
+        {visibleReferenceLines.map((line) => (
+          <line
+            key={line.key}
+            x1={chartPad.left}
+            y1={y(displayReferenceLineValue(line))}
+            x2={WIDTH - chartPad.right}
+            y2={y(displayReferenceLineValue(line))}
+            stroke={line.color}
+            strokeWidth="2.5"
+            strokeDasharray={line.dash}
+            strokeLinecap="round"
+          >
+            <title>{`${line.label}: ${formatMetricValue(line)}`}</title>
+          </line>
+        ))}
       </svg>
       <details className="chart-details">
         <summary>Show data</summary>
         <ul className="chart-key" aria-label="Progress chart series">
           {series.map((item) => <li key={item.key}><strong>{item.fullLabel}</strong> - {item.styleLabel}</li>)}
+          {visibleReferenceLines.map((line) => <li key={line.key}><strong>{line.label}</strong> - {formatMetricValue(line)} reference line</li>)}
         </ul>
         <div className="table-scroll">
           <table>
@@ -161,6 +196,11 @@ function shortMetricLabel(point: ProgressPoint) {
 function displayValue(point: ProgressPoint) {
   if (point.unit === "N" || point.metricKey.endsWith("ForceN")) return forceNToKgf(point.value);
   return point.value;
+}
+
+function displayReferenceLineValue(line: ProgressReferenceLine) {
+  if (line.unit === "N" || line.metricKey.endsWith("ForceN")) return forceNToKgf(line.value);
+  return line.value;
 }
 
 function compactDateTicks(points: readonly ProgressPoint[]) {

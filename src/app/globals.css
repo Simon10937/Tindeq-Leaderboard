@@ -532,6 +532,11 @@ label,
   color: #fff;
 }
 
+.chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 input,
 select,
 textarea {
@@ -604,6 +609,18 @@ textarea {
 .draft-fields .button,
 .tag-editor {
   grid-column: 1 / -1;
+}
+
+.checkbox-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.checkbox-row input {
+  flex: 0 0 auto;
+  height: 18px;
+  width: 18px;
 }
 
 .tag-input-row {

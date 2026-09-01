@@ -69,4 +69,21 @@ describe("TrackerProgressChart", () => {
     expect(markup).toContain("10.2 kg");
     expect(markup).not.toContain("100 N");
   });
+
+  it("renders horizontal baseline reference lines in the legend and chart details", () => {
+    const markup = renderToStaticMarkup(<TrackerProgressChart
+      selectedMetric="peakForceN"
+      points={[
+        { sessionId: "rehab", mode: "peak_force", grip: "half crimp", hand: "right", testedAt: "2026-08-24T12:00:00.000Z", metricKey: "peakForceN", label: "Max force", value: 80, unit: "N" },
+      ]}
+      referenceLines={[
+        { key: "baseline", label: "Healthy hand baseline", value: 120, metricKey: "peakForceN", unit: "N", color: "#475569", dash: "6 4" },
+      ]}
+    />);
+
+    expect(markup).toContain("Healthy hand baseline");
+    expect(markup).toContain("12.24 kg");
+    expect(markup).toContain("stroke-dasharray=\"6 4\"");
+    expect(markup).toContain("<span>Healthy hand baseline</span>");
+  });
 });
