@@ -70,6 +70,18 @@ describe("TrackerProgressChart", () => {
     expect(markup).not.toContain("100 N");
   });
 
+  it("keeps decimal kilogram grid labels inside the chart gutter", () => {
+    const markup = renderToStaticMarkup(<TrackerProgressChart points={[
+      { sessionId: "1", mode: "repeater", grip: "half crimp", testedAt: "2026-08-20T10:00:00.000Z", metricKey: "repeaterAverageForceN", label: "Repeater average force", value: 14.57 * 9.80665, unit: "N" },
+      { sessionId: "2", mode: "repeater", grip: "half crimp", testedAt: "2026-08-21T10:00:00.000Z", metricKey: "peakForceN", label: "Peak force", value: 27.06 * 9.80665, unit: "N" },
+    ]} />);
+
+    expect(markup).toContain("x1=\"56\"");
+    expect(markup).toMatch(/class="axis-tick"[^>]*x="49"[^>]*>14.57<\/text>/);
+    expect(markup).toMatch(/class="axis-tick"[^>]*x="49"[^>]*>20.81<\/text>/);
+    expect(markup).toMatch(/class="axis-tick"[^>]*x="49"[^>]*>27.06<\/text>/);
+  });
+
   it("renders horizontal baseline reference lines in the legend and chart details", () => {
     const markup = renderToStaticMarkup(<TrackerProgressChart
       selectedMetric="peakForceN"

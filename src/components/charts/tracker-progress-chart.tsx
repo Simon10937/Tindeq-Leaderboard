@@ -41,7 +41,7 @@ export function TrackerProgressChart({ points, selectedMetric, referenceLines = 
   const timeMax = Math.max(...times);
   const valueMin = Math.min(...values);
   const valueMax = Math.max(...values);
-  const chartPad = { left: 34, right: 22, top: 28, bottom: 34 };
+  const chartPad = { left: 56, right: 22, top: 28, bottom: 34 };
   const x = (time: number) => scale(time, timeMin, timeMax, chartPad.left, WIDTH - chartPad.right);
   const y = (value: number) => scale(value, valueMin, valueMax, HEIGHT - chartPad.bottom, chartPad.top);
   const dateTicks = compactDateTicks(visible);
